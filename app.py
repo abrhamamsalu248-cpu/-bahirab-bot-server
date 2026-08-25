@@ -258,7 +258,27 @@ EXAMS = {
     "global_final_2016": {"name": "Global Final Exam", "msg_id": 176, "type": "file"},
     "global_mid_2016": {"name": "Global Trend Mid Exam 2016", "msg_id": 26, "type": "file"},
     "emerging_final_2016": {"name": "Emerging Technology Final Exam", "msg_id": 34, "type": "file"},
-    "emerging_mid_2016": {"name": "Emerging Technology Mid Exam 2016", "msg_id": 24, "type": "file"}
+    "emerging_mid_2016": {"name": "Emerging Technology Mid Exam 2016", "msg_id": 24, "type": "file"},
+
+    # --- 18 FRESHMAN MODULES (250 COINS) ---
+    "mod_anthro": {"name": "Anthropology Freshman Module", "msg_id": 2, "type": "file"},
+    "mod_entrepreneurship": {"name": "Entrepreneurship Freshman Module", "msg_id": 3, "type": "file"},
+    "mod_physics": {"name": "General Physics Freshman Module", "msg_id": 4, "type": "file"},
+    "mod_global": {"name": "Global Affairs Freshman Module", "msg_id": 5, "type": "file"},
+    "mod_inclusiveness": {"name": "Inclusiveness Freshman Module", "msg_id": 6, "type": "file"},
+    "mod_psychology": {"name": "General Psychology Freshman Module", "msg_id": 7, "type": "file"},
+    "mod_fitness": {"name": "Physical Fitness Freshman Module", "msg_id": 8, "type": "file"},
+    "mod_geography": {"name": "Geography of Ethiopia and The Horn Module", "msg_id": 9, "type": "file"},
+    "mod_biology": {"name": "General Biology Freshman Module", "msg_id": 10, "type": "file"},
+    "mod_chemistry": {"name": "General Chemistry Freshman Module", "msg_id": 11, "type": "file"},
+    "mod_english_one": {"name": "Communicative English Language Skills I Module", "msg_id": 12, "type": "file"},
+    "mod_history": {"name": "History of Ethiopia and The Horn Module", "msg_id": 13, "type": "file"},
+    "mod_economics": {"name": "Introduction to Economics Freshman Module", "msg_id": 14, "type": "file"},
+    "mod_logic": {"name": "Logic and Critical Thinking Module", "msg_id": 15, "type": "file"},
+    "mod_english_two": {"name": "Communicative English Skills II Module", "msg_id": 16, "type": "file"},
+    "mod_civics": {"name": "Moral and Citizenship Education Module", "msg_id": 17, "type": "file"},
+    "mod_math_natural": {"name": "Mathematics for Natural Science Module", "msg_id": 18, "type": "file"},
+    "mod_math_social": {"name": "Mathematics for Social Sciences Module", "msg_id": 19, "type": "file"}
 }
 
 def get_main_keyboard(lang="am"):
