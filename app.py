@@ -23,12 +23,14 @@ CHANNEL_ID = "@BahirabAcademy"
 CHANNEL_USERNAME = "BahirabAcademy"
 WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
 
+# 📌 የርስዎ አድሚን ID ተካቷል
+ADMIN_ID = "7105615214" 
+
 USERS_FILE = "users_detailed.txt"
 total_downloads = 0
 user_languages = {}
 
 def track_user_info(user):
-    """ተጠቃሚው ቦቱን ሲጀምር ይመዘግባል (ቀደም ሲል ከሌለ)"""
     try:
         user_id = str(user.id)
         name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
@@ -46,7 +48,6 @@ def track_user_info(user):
                             user_exists = True
                         users_data.append(line.strip())
                     elif len(parts) >= 3:
-                        # የድሮውን ፎርማት ወደ አዲሱ (ውርዶች ብዛት ጨምሮ) ማስተካከል
                         if parts[0] == user_id:
                             user_exists = True
                             users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0")
@@ -63,7 +64,6 @@ def track_user_info(user):
         print(f"Tracking error: {e}")
 
 def increment_user_download(user_id):
-    """አንድ ተጠቃሚ ፋይል ሲያወርድ የውርዶች ብዛቱን በአንድ ይጨምራል"""
     try:
         user_id = str(user_id)
         users_data = []
@@ -203,10 +203,15 @@ EXAMS = {
 
 def get_main_keyboard(lang="am"):
     btn_text = "🔍 ተጨማሪ ጥያቄዎች ያግኙ (Open App)" if lang == "am" else "🔍 Get More Questions & Exams"
-    lang_btn_text = "🌐 ቋንቋ ቀይሩ (Change Language)" if lang == "am" else "🌐 Change Language"
+    lang_btn_text = "🌐 ቋንቋ ቀይሩ (Change)" if lang == "am" else "🌐 Change Lang"
+    feedback_btn_text = "💬 አስተያየት (Feedback)" if lang == "am" else "💬 Feedback"
+    
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text=btn_text, web_app=WebAppInfo(url=WEB_APP_URL)))
-    keyboard.add(InlineKeyboardButton(text=lang_btn_text, callback_data="change_lang"))
+    keyboard.add(
+        InlineKeyboardButton(text=lang_btn_text, callback_data="change_lang"),
+        InlineKeyboardButton(text=feedback_btn_text, callback_data="give_feedback")
+    )
     return keyboard
 
 def get_lang_selection_keyboard():
@@ -249,6 +254,50 @@ def handle_stats(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"Stats Error: {e}")
 
+# --- FEEDBACK BUTTON & HANDLER ---
+@bot.callback_query_handler(func=lambda call: call.data == "give_feedback")
+def feedback_prompt(call):
+    chat_id = call.message.chat.id
+    lang = user_languages.get(chat_id, "am")
+    prompt_text = (
+        "✍️ እባክዎ ስለ ቦቱ፣ ፈተናዎች ወይም ማቴሪያሎች ያሎትን አስተያየት ወይም ጥያቄ ከዚህ በታች ይጻፉልን:"
+        if lang == "am" else
+        "✍️ Please type your feedback, suggestion, or question below:"
+    )
+    sent_msg = bot.send_message(chat_id, prompt_text)
+    bot.register_next_step_handler(sent_msg, save_and_forward_feedback)
+
+def save_and_forward_feedback(message):
+    user = message.from_user
+    feedback_text = message.text
+    chat_id = message.chat.id
+    lang = user_languages.get(chat_id, "am")
+    
+    admin_notification = (
+        "📩 **አዲስ አስተያየት መጣ! (New Feedback)**\n\n"
+        f"👤 ከ: {user.first_name} (@{user.username if user.username else 'No Username'})\n"
+        f"🆔 ID: `{user.id}`\n\n"
+        f"💬 አስተያየት፦\n{feedback_text}"
+    )
+    
+    try:
+        # አሁን አድሚን ID ተስተካክሏል
+        bot.send_message(ADMIN_ID, admin_notification, parse_mode="Markdown")
+        
+        success_msg = (
+            "✅ እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ደርሶናል።"
+            if lang == "am" else
+            "✅ Thank you! Your feedback has been successfully sent."
+        )
+        bot.reply_to(message, success_msg, reply_markup=get_main_keyboard(lang))
+    except Exception as e:
+        err_msg = (
+            "⚠️ ይቅርታ፣ አስተያየትዎን መላክ አልተቻለም። እባክዎ እንደገና ይሞክሩ።"
+            if lang == "am" else
+            "⚠️ Sorry, could not send your feedback. Please try again."
+        )
+        bot.reply_to(message, err_msg, reply_markup=get_main_keyboard(lang))
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_") or call.data == "change_lang")
 def handle_language_choice(call):
     chat_id = call.message.chat.id
@@ -256,7 +305,7 @@ def handle_language_choice(call):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text="🌐 እባክዎ ቋንቋ ይምረጡ / Please select your language:",
+            text="🌐 Please choose your language / እባክዎ ቋንቋ ይምረጡ:",
             reply_markup=get_lang_selection_keyboard()
         )
         return
@@ -294,20 +343,16 @@ def handle_start(message):
     chat_id = message.chat.id
     user = message.from_user
     
-    # ተጠቃሚውን መዝግብ (አዲስ ከሆነ)
     track_user_info(user)
     
     text_parts = message.text.split()
-    lang = user_languages.get(chat_id, "am")
     
-    # ተጠቃሚው ከአፑ ውስጥ ማቴሪያል ከፍቶ ሲመጣ (በ Parameter)
     if len(text_parts) > 1:
         file_key = text_parts[1]
+        lang = user_languages.get(chat_id, "am")
         
-        # የተጠየቀው ፋይል ካለ
         if file_key in EXAMS:
             total_downloads += 1
-            # የዚህን ተጠቃሚ የግል ውርዶች ብዛት በአንድ እንጨምራለን
             increment_user_download(user.id)
             
             exam = EXAMS[file_key]
@@ -333,7 +378,6 @@ def handle_start(message):
                 )
                 bot.send_message(chat_id, file_notice)
                 try:
-                    # ፋይሉን ከዋናው ቻናል በቀጥታ ወደ ተጠቃሚው ይልካል
                     bot.copy_message(
                         chat_id=chat_id,
                         from_chat_id=CHANNEL_ID,
@@ -348,11 +392,11 @@ def handle_start(message):
             
         return
 
-    # ምንም Parameter ሳይኖር ንጹህ /start ብቻ ሲመጣ (አዲስ ተጠቃሚ)
     bot.reply_to(
         message,
-        f"ሰላም {message.from_user.first_name}!\n\n"
-        "🌐 እባክዎ ቋንቋ ይምረጡ / Please choose your language:",
+        f"Hello {message.from_user.first_name}! 👋\n\n"
+        "Welcome to Bahirab Study Hub.\n"
+        "Please choose your language to start:",
         reply_markup=get_lang_selection_keyboard()
     )
 
