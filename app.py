@@ -163,7 +163,8 @@ EXAMS = {
 }
 
 def get_main_keyboard(lang="am"):
-    btn_text = "📚 ማቴሪያሎችን ክፈቱ (Open App)" if lang == "am" else "📚 Open Study Hub"
+    # እዚህ ጋር "ማቴሪያሎችን ክፈቱ" የሚለውን ወደ "ተጨማሪ ጥያቄዎች ያግኙ" ቀይሬዋለሁ
+    btn_text = "🔍 ተጨማሪ ጥያቄዎች ያግኙ (Open App)" if lang == "am" else "🔍 Get More Questions & Exams"
     lang_btn_text = "🌐 ቋንቋ ቀይሩ (Change Language)" if lang == "am" else "🌐 Change Language"
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(text=btn_text, web_app=WebAppInfo(url=WEB_APP_URL)))
@@ -269,7 +270,7 @@ def handle_start(message):
                 post_url = f"https://t.me/{CHANNEL_USERNAME}/{exam['msg_id']}"
                 link_keyboard = InlineKeyboardMarkup()
                 open_btn_text = "📖 ፈተናውን በቻናሉ ክፈቱ" if lang == "am" else "📖 Open in Channel"
-                more_btn_text = "📚 ተጨማሪ ማቴሪያሎች" if lang == "am" else "📚 More Materials"
+                more_btn_text = "🔍 ተጨማሪ ጥያቄዎች ያግኙ" if lang == "am" else "🔍 Get More Questions"
                 link_keyboard.add(InlineKeyboardButton(text=open_btn_text, url=post_url))
                 link_keyboard.add(InlineKeyboardButton(text=more_btn_text, web_app=WebAppInfo(url=WEB_APP_URL)))
                 msg = (
@@ -296,7 +297,6 @@ def handle_start(message):
                 except Exception as e:
                     bot.send_message(chat_id, f"Error: {e}", reply_markup=get_main_keyboard(lang))
         else:
-            # የተጠየቀው ፋይል ኮድ በ EXAMS ውስጥ ከሌለ ግልጽ ስህተት እንዲያሳይ ተደርጓል
             error_msg = f"⚠️ ይቅርታ፣ የጠየቁት ፋይል ({file_key}) አልተገኘም (File not found)." if lang == "am" else f"⚠️ Sorry, the requested file ({file_key}) was not found."
             bot.send_message(chat_id, error_msg, reply_markup=get_main_keyboard(lang))
             
