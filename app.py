@@ -28,24 +28,63 @@ total_downloads = 0
 user_languages = {}
 
 def track_user_info(user):
+    """ተጠቃሚው ቦቱን ሲጀምር ይመዘግባል (ቀደም ሲል ከሌለ)"""
     try:
         user_id = str(user.id)
         name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
         username = f"@{user.username}" if user.username else "No Username"
         
-        registered_ids = set()
+        users_data = []
+        user_exists = False
+        
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(" | ")
-                    if parts:
-                        registered_ids.add(parts[0])
-                        
-        if user_id not in registered_ids:
-            with open(USERS_FILE, "a", encoding="utf-8") as f:
-                f.write(f"{user_id} | {name} | {username}\n")
+                    if len(parts) >= 4:
+                        if parts[0] == user_id:
+                            user_exists = True
+                        users_data.append(line.strip())
+                    elif len(parts) >= 3:
+                        # የድሮውን ፎርማት ወደ አዲሱ (ውርዶች ብዛት ጨምሮ) ማስተካከል
+                        if parts[0] == user_id:
+                            user_exists = True
+                            users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0")
+                        else:
+                            users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0")
+                            
+        if not user_exists:
+            users_data.append(f"{user_id} | {name} | {username} | 0")
+            
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            for item in users_data:
+                f.write(item + "\n")
     except Exception as e:
         print(f"Tracking error: {e}")
+
+def increment_user_download(user_id):
+    """አንድ ተጠቃሚ ፋይል ሲያወርድ የውርዶች ብዛቱን በአንድ ይጨምራል"""
+    try:
+        user_id = str(user_id)
+        users_data = []
+        
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split(" | ")
+                    if len(parts) >= 4:
+                        u_id, u_name, u_user, u_downloads = parts[0], parts[1], parts[2], int(parts[3])
+                        if u_id == user_id:
+                            u_downloads += 1
+                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_downloads}")
+                    else:
+                        users_data.append(line.strip())
+                        
+            with open(USERS_FILE, "w", encoding="utf-8") as f:
+                for item in users_data:
+                    f.write(item + "\n")
+    except Exception as e:
+        print(f"Increment download error: {e}")
 
 def get_users_list():
     if not os.path.exists(USERS_FILE):
@@ -163,7 +202,6 @@ EXAMS = {
 }
 
 def get_main_keyboard(lang="am"):
-    # እዚህ ጋር "ማቴሪያሎችን ክፈቱ" የሚለውን ወደ "ተጨማሪ ጥያቄዎች ያግኙ" ቀይሬዋለሁ
     btn_text = "🔍 ተጨማሪ ጥያቄዎች ያግኙ (Open App)" if lang == "am" else "🔍 Get More Questions & Exams"
     lang_btn_text = "🌐 ቋንቋ ቀይሩ (Change Language)" if lang == "am" else "🌐 Change Language"
     keyboard = InlineKeyboardMarkup()
@@ -190,9 +228,12 @@ def handle_stats(message):
         lines = []
         for u in recent_users:
             parts = u.split(" | ")
-            if len(parts) >= 3:
+            if len(parts) >= 4:
+                u_id, u_name, u_user, u_downloads = parts[0], parts[1], parts[2], parts[3]
+                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user}) - 📥 {u_downloads} ውርዶች")
+            elif len(parts) >= 3:
                 u_id, u_name, u_user = parts[0], parts[1], parts[2]
-                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user})")
+                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user}) - 📥 0 ውርዶች")
             else:
                 lines.append(f"• {u}")
                 
@@ -200,9 +241,9 @@ def handle_stats(message):
         
         stats_msg = (
             "📊 Bahirab Bot Analytics\n\n"
-            f"👥 ጠቅላላ ተማሪዎች: {total_u}\n"
-            f"📥 የተወረዱ ፈተናዎች: {total_downloads} ጊዜ\n\n"
-            f"📝 የቅርብ ተጠቃሚዎች ዝርዝር (ID ጨምሮ)፦\n{user_list_str}"
+            f"👥 ጠቅላላ ተጠቃሚዎች: {total_u}\n"
+            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_downloads} ጊዜ\n\n"
+            f"📝 የቅርብ ተጠቃሚዎች ዝርዝር (ከነ ውርዳቸው ብዛት)፦\n{user_list_str}"
         )
         bot.send_message(message.chat.id, stats_msg)
     except Exception as e:
@@ -251,8 +292,10 @@ def handle_language_choice(call):
 def handle_start(message):
     global total_downloads
     chat_id = message.chat.id
+    user = message.from_user
     
-    track_user_info(message.from_user)
+    # ተጠቃሚውን መዝግብ (አዲስ ከሆነ)
+    track_user_info(user)
     
     text_parts = message.text.split()
     lang = user_languages.get(chat_id, "am")
@@ -264,6 +307,9 @@ def handle_start(message):
         # የተጠየቀው ፋይል ካለ
         if file_key in EXAMS:
             total_downloads += 1
+            # የዚህን ተጠቃሚ የግል ውርዶች ብዛት በአንድ እንጨምራለን
+            increment_user_download(user.id)
+            
             exam = EXAMS[file_key]
             
             if exam["type"] == "link":
