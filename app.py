@@ -48,6 +48,7 @@ WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
 ADMIN_ID = "7105615214"
 
 USERS_FILE = "users_detailed.txt"
+FEEDBACK_FILE = "feedback.txt"
 total_downloads = 0
 total_ads_watched = 0
 user_languages = {}
@@ -353,32 +354,38 @@ def feedback_prompt(call):
 
 def save_and_forward_feedback(message):
     user = message.from_user
-    feedback_text = message.text
+    feedback_text = message.text or ""
     chat_id = message.chat.id
     lang = user_languages.get(chat_id, "am")
     
+    # አስተያየቱን ሰርቨሩ ላይ ባለው የጽሑፍ ፋይል ውስጥ መዝግቦ መያዝ
+    try:
+        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+            f.write(f"ID: {user.id} | Name: {user.first_name} | Username: @{user.username} | Text: {feedback_text}\n")
+    except Exception as err:
+        print(f"File log error: {err}")
+
+    # ንጹሕ የጽሁፍ መልእክት (ያለ Markdown ኤረር)
     admin_notification = (
-        "📩 **አዲስ አስተያየት መጣ! (New Feedback)**\n\n"
+        "📩 አዲስ አስተያየት መጣ! (New Feedback)\n\n"
         f"👤 ከ: {user.first_name} (@{user.username if user.username else 'No Username'})\n"
-        f"🆔 ID: `{user.id}`\n\n"
+        f"🆔 ID: {user.id}\n\n"
         f"💬 አስተያየት፦\n{feedback_text}"
     )
     
+    # ለአድሚኑ መላክ (አድሚኑ ቦቱን ባይከፍተውም ለተጠቃሚው ስህተት እንዳይገጥመው ይከላከላል)
     try:
-        bot.send_message(ADMIN_ID, admin_notification, parse_mode="Markdown")
-        success_msg = (
-            "✅ እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ደርሶናል።"
-            if lang == "am" else
-            "✅ Thank you! Your feedback has been successfully sent."
-        )
-        bot.reply_to(message, success_msg, reply_markup=get_main_keyboard(lang))
+        bot.send_message(int(ADMIN_ID), admin_notification)
     except Exception as e:
-        err_msg = (
-            "⚠️ ይቅርታ፣ አስተያየትዎን መላክ አልተቻለም። እባክዎ እንደገና ይሞክሩ።"
-            if lang == "am" else
-            "⚠️ Sorry, could not send your feedback. Please try again."
-        )
-        bot.reply_to(message, err_msg, reply_markup=get_main_keyboard(lang))
+        print(f"Admin forward warning: {e}")
+
+    # ለተጠቃሚው የተላከበትን ማረጋገጫ መስጠት
+    success_msg = (
+        "✅ እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ደርሶናል።"
+        if lang == "am" else
+        "✅ Thank you! Your feedback has been successfully sent."
+    )
+    bot.reply_to(message, success_msg, reply_markup=get_main_keyboard(lang))
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_") or call.data == "change_lang")
 def handle_language_choice(call):
