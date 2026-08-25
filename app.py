@@ -28,7 +28,6 @@ total_downloads = 0
 user_languages = {}
 
 def track_user_info(user):
-    """የተማሪውን ID፣ ስምና ዩዘርኔም መዝግቦ የሚይዝ"""
     try:
         user_id = str(user.id)
         name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
@@ -159,7 +158,8 @@ EXAMS = {
     "civics_mid_2016": {"name": "Civics Mid Exam 2016", "msg_id": 149, "type": "file"},
     "global_final_2016": {"name": "Global Final Exam", "msg_id": 176, "type": "file"},
     "global_mid_2016": {"name": "Global Trend Mid Exam 2016", "msg_id": 26, "type": "file"},
-    "emerging_final_2016": {"name": "Emerging Technology Final Exam", "msg_id": 34, "type": "file"}
+    "emerging_final_2016": {"name": "Emerging Technology Final Exam", "msg_id": 34, "type": "file"},
+    "emerging_mid_2016": {"name": "Emerging Technology Mid Exam 2016", "msg_id": 24, "type": "file"}
 }
 
 def get_main_keyboard(lang="am"):
@@ -296,11 +296,11 @@ def handle_start(message):
                 except Exception as e:
                     bot.send_message(chat_id, f"Error: {e}", reply_markup=get_main_keyboard(lang))
         else:
-            # የተጠየቀው ፋይል ኮድ በ EXAMS ውስጥ ከሌለ
-            error_msg = "⚠️ ይቅርታ፣ የጠየቁት ፋይል አልተገኘም (File not found)." if lang == "am" else "⚠️ Sorry, the requested file was not found."
+            # የተጠየቀው ፋይል ኮድ በ EXAMS ውስጥ ከሌለ ግልጽ ስህተት እንዲያሳይ ተደርጓል
+            error_msg = f"⚠️ ይቅርታ፣ የጠየቁት ፋይል ({file_key}) አልተገኘም (File not found)." if lang == "am" else f"⚠️ Sorry, the requested file ({file_key}) was not found."
             bot.send_message(chat_id, error_msg, reply_markup=get_main_keyboard(lang))
             
-        return # በሊንክ/parameter የመጣ ተጠቃሚ ወደ ቋንቋ መምረጫው እንዳይሄድ እዚሁ ይቋረጣል
+        return
 
     # ምንም Parameter ሳይኖር ንጹህ /start ብቻ ሲመጣ (አዲስ ተጠቃሚ)
     bot.reply_to(
