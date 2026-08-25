@@ -1,15 +1,37 @@
 import os
 import threading
-from flask import Flask
+from flask import Flask, request, jsonify
+from flask_cors import CORS  # አስፈላጊ ከሆነ: pip install flask-cors
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-# --- Render Web Service Port Fix ---
+# --- Flask Server Setup ---
 app = Flask(__name__)
+
+# ለሁሉም origin ጥያቄዎችን እንዲቀበል (CORS fix)
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 @app.route('/')
 def home():
     return "Bahirab Quiz Hub Bot is Running 24/7!"
+
+# 📺 ተጠቃሚው አድ ሲያይ ከሚኒ አፑ መረጃ የሚቀበልበት API
+@app.route('/api/track-ad', methods=['POST'])
+def track_ad_view():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user_id = data.get('user_id')
+        if user_id:
+            increment_user_ad(user_id)
+            return jsonify({"status": "success", "user_id": user_id}), 200
+    except Exception as e:
+        print(f"Track ad error: {e}")
+    return jsonify({"status": "error"}), 400
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -22,12 +44,11 @@ bot = telebot.TeleBot(BOT_TOKEN)
 CHANNEL_ID = "@BahirabAcademy"
 CHANNEL_USERNAME = "BahirabAcademy"
 WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
-
-# 📌 የርስዎ አድሚን ID ተካቷል
-ADMIN_ID = "7105615214" 
+ADMIN_ID = "7105615214"
 
 USERS_FILE = "users_detailed.txt"
 total_downloads = 0
+total_ads_watched = 0
 user_languages = {}
 
 def track_user_info(user):
@@ -43,19 +64,22 @@ def track_user_info(user):
             with open(USERS_FILE, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(" | ")
-                    if len(parts) >= 4:
+                    # Format: id | name | username | downloads | ads
+                    if len(parts) >= 5:
                         if parts[0] == user_id:
                             user_exists = True
                         users_data.append(line.strip())
+                    elif len(parts) == 4:
+                        if parts[0] == user_id:
+                            user_exists = True
+                        users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | {parts[3]} | 0")
                     elif len(parts) >= 3:
                         if parts[0] == user_id:
                             user_exists = True
-                            users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0")
-                        else:
-                            users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0")
+                        users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0 | 0")
                             
         if not user_exists:
-            users_data.append(f"{user_id} | {name} | {username} | 0")
+            users_data.append(f"{user_id} | {name} | {username} | 0 | 0")
             
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             for item in users_data:
@@ -67,16 +91,20 @@ def increment_user_download(user_id):
     try:
         user_id = str(user_id)
         users_data = []
-        
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(" | ")
-                    if len(parts) >= 4:
-                        u_id, u_name, u_user, u_downloads = parts[0], parts[1], parts[2], int(parts[3])
+                    if len(parts) >= 5:
+                        u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], int(parts[3]), int(parts[4])
                         if u_id == user_id:
-                            u_downloads += 1
-                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_downloads}")
+                            u_dl += 1
+                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
+                    elif len(parts) >= 4:
+                        u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], int(parts[3])
+                        if u_id == user_id:
+                            u_dl += 1
+                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | 0")
                     else:
                         users_data.append(line.strip())
                         
@@ -85,6 +113,42 @@ def increment_user_download(user_id):
                     f.write(item + "\n")
     except Exception as e:
         print(f"Increment download error: {e}")
+
+def increment_user_ad(user_id):
+    global total_ads_watched
+    try:
+        total_ads_watched += 1
+        user_id = str(user_id)
+        users_data = []
+        user_found = False
+        
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split(" | ")
+                    if len(parts) >= 5:
+                        u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], int(parts[3]), int(parts[4])
+                        if u_id == user_id:
+                            u_ads += 1
+                            user_found = True
+                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
+                    elif len(parts) == 4:
+                        u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], int(parts[3])
+                        u_ads = 1 if u_id == user_id else 0
+                        if u_id == user_id:
+                            user_found = True
+                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
+                    else:
+                        users_data.append(line.strip())
+                        
+        if not user_found:
+            users_data.append(f"{user_id} | User | No Username | 0 | 1")
+            
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            for item in users_data:
+                f.write(item + "\n")
+    except Exception as e:
+        print(f"Increment ad error: {e}")
 
 def get_users_list():
     if not os.path.exists(USERS_FILE):
@@ -188,8 +252,6 @@ EXAMS = {
     "comm_skills_one_822": {"name": "Communication Skills One English Final Exam", "msg_id": 822, "type": "file"},
     "comm_skills_one_823": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 823, "type": "link"},
     "comm_skills_one_827": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 827, "type": "file"},
-
-    # አዲስ የተጨመሩ (ለአፑ እንዲሰሩ የተደረጉ)
     "psychology_final_2016": {"name": "General Psychology Final Exam", "msg_id": 175, "type": "file"},
     "english_final_2016": {"name": "Communication Skills English Final Exam", "msg_id": 174, "type": "file"},
     "english_mid_2016": {"name": "Communication English Skills Two Mid Exam", "msg_id": 326, "type": "file"},
@@ -233,22 +295,23 @@ def handle_stats(message):
         lines = []
         for u in recent_users:
             parts = u.split(" | ")
-            if len(parts) >= 4:
-                u_id, u_name, u_user, u_downloads = parts[0], parts[1], parts[2], parts[3]
-                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user}) - 📥 {u_downloads} ውርዶች")
-            elif len(parts) >= 3:
-                u_id, u_name, u_user = parts[0], parts[1], parts[2]
-                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user}) - 📥 0 ውርዶች")
+            if len(parts) >= 5:
+                u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], parts[3], parts[4]
+                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user})\n   ↳ 📥 {u_dl} ውርዶች | 📺 {u_ads} ማስታወቂያዎች")
+            elif len(parts) >= 4:
+                u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], parts[3]
+                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user})\n   ↳ 📥 {u_dl} ውርዶች | 📺 0 ማስታወቂያዎች")
             else:
                 lines.append(f"• {u}")
                 
-        user_list_str = "\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
+        user_list_str = "\n\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
         
         stats_msg = (
             "📊 Bahirab Bot Analytics\n\n"
             f"👥 ጠቅላላ ተጠቃሚዎች: {total_u}\n"
-            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_downloads} ጊዜ\n\n"
-            f"📝 የቅርብ ተጠቃሚዎች ዝርዝር (ከነ ውርዳቸው ብዛት)፦\n{user_list_str}"
+            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_downloads} ጊዜ\n"
+            f"📺 የታዩ ማስታወቂያዎች: {total_ads_watched} ጊዜ\n\n"
+            f"📝 የቅርብ ተጠቃሚዎች ዝርዝር፦\n\n{user_list_str}"
         )
         bot.send_message(message.chat.id, stats_msg)
     except Exception as e:
@@ -281,9 +344,7 @@ def save_and_forward_feedback(message):
     )
     
     try:
-        # አሁን አድሚን ID ተስተካክሏል
         bot.send_message(ADMIN_ID, admin_notification, parse_mode="Markdown")
-        
         success_msg = (
             "✅ እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ደርሶናል።"
             if lang == "am" else
