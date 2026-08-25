@@ -149,7 +149,17 @@ EXAMS = {
     "logic_final_818": {"name": "Logic Final Exam 2017", "msg_id": 818, "type": "link"},
     "comm_skills_one_822": {"name": "Communication Skills One English Final Exam", "msg_id": 822, "type": "file"},
     "comm_skills_one_823": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 823, "type": "link"},
-    "comm_skills_one_827": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 827, "type": "file"}
+    "comm_skills_one_827": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 827, "type": "file"},
+
+    # አዲስ የተጨመሩ (ለአፑ እንዲሰሩ የተደረጉ)
+    "psychology_final_2016": {"name": "General Psychology Final Exam", "msg_id": 175, "type": "file"},
+    "english_final_2016": {"name": "Communication Skills English Final Exam", "msg_id": 174, "type": "file"},
+    "english_mid_2016": {"name": "Communication English Skills Two Mid Exam", "msg_id": 326, "type": "file"},
+    "civics_final_2015": {"name": "Civics Final Exam 2016", "msg_id": 180, "type": "file"},
+    "civics_mid_2016": {"name": "Civics Mid Exam 2016", "msg_id": 149, "type": "file"},
+    "global_final_2016": {"name": "Global Final Exam", "msg_id": 176, "type": "file"},
+    "global_mid_2016": {"name": "Global Trend Mid Exam 2016", "msg_id": 26, "type": "file"},
+    "emerging_final_2016": {"name": "Emerging Technology Final Exam", "msg_id": 34, "type": "file"}
 }
 
 def get_main_keyboard(lang="am"):
@@ -246,44 +256,53 @@ def handle_start(message):
     text_parts = message.text.split()
     lang = user_languages.get(chat_id, "am")
     
-    # ተጠቃሚው ከአፑ ውስጥ ማቴሪያል ከፍቶ ሲመጣ (Direct File / Channel Forward)
-    if len(text_parts) > 1 and text_parts[1] in EXAMS:
-        total_downloads += 1
-        exam = EXAMS[text_parts[1]]
-        if exam["type"] == "link":
-            post_url = f"https://t.me/{CHANNEL_USERNAME}/{exam['msg_id']}"
-            link_keyboard = InlineKeyboardMarkup()
-            open_btn_text = "📖 ፈተናውን በቻናሉ ክፈቱ" if lang == "am" else "📖 Open in Channel"
-            more_btn_text = "📚 ተጨማሪ ማቴሪያሎች" if lang == "am" else "📚 More Materials"
-            link_keyboard.add(InlineKeyboardButton(text=open_btn_text, url=post_url))
-            link_keyboard.add(InlineKeyboardButton(text=more_btn_text, web_app=WebAppInfo(url=WEB_APP_URL)))
-            msg = (
-                f"📖 {exam['name']}\n\n🔗 ፈተናውን ለማግኘት ከታች ያለውን ሊንክ ይጫኑ፦\n👉 {post_url}"
-                if lang == "am" else
-                f"📖 {exam['name']}\n\n🔗 Click the link below to access the exam:\n👉 {post_url}"
-            )
-            bot.send_message(chat_id, msg, reply_markup=link_keyboard)
-            return
+    # ተጠቃሚው ከአፑ ውስጥ ማቴሪያል ከፍቶ ሲመጣ (በ Parameter)
+    if len(text_parts) > 1:
+        file_key = text_parts[1]
+        
+        # የተጠየቀው ፋይል ካለ
+        if file_key in EXAMS:
+            total_downloads += 1
+            exam = EXAMS[file_key]
+            
+            if exam["type"] == "link":
+                post_url = f"https://t.me/{CHANNEL_USERNAME}/{exam['msg_id']}"
+                link_keyboard = InlineKeyboardMarkup()
+                open_btn_text = "📖 ፈተናውን በቻናሉ ክፈቱ" if lang == "am" else "📖 Open in Channel"
+                more_btn_text = "📚 ተጨማሪ ማቴሪያሎች" if lang == "am" else "📚 More Materials"
+                link_keyboard.add(InlineKeyboardButton(text=open_btn_text, url=post_url))
+                link_keyboard.add(InlineKeyboardButton(text=more_btn_text, web_app=WebAppInfo(url=WEB_APP_URL)))
+                msg = (
+                    f"📖 {exam['name']}\n\n🔗 ፈተናውን ለማግኘት ከታች ያለውን ሊንክ ይጫኑ፦\n👉 {post_url}"
+                    if lang == "am" else
+                    f"📖 {exam['name']}\n\n🔗 Click the link below to access the exam:\n👉 {post_url}"
+                )
+                bot.send_message(chat_id, msg, reply_markup=link_keyboard)
+            else:
+                file_notice = (
+                    f"📥 {exam['name']}\n\n✨ ፈተናው ከታች ተልኮላችኋል 👇"
+                    if lang == "am" else
+                    f"📥 {exam['name']}\n\n✨ Your exam has been sent below 👇"
+                )
+                bot.send_message(chat_id, file_notice)
+                try:
+                    # ፋይሉን ከዋናው ቻናል በቀጥታ ወደ ተጠቃሚው ይልካል
+                    bot.copy_message(
+                        chat_id=chat_id,
+                        from_chat_id=CHANNEL_ID,
+                        message_id=exam["msg_id"],
+                        reply_markup=get_main_keyboard(lang)
+                    )
+                except Exception as e:
+                    bot.send_message(chat_id, f"Error: {e}", reply_markup=get_main_keyboard(lang))
+        else:
+            # የተጠየቀው ፋይል ኮድ በ EXAMS ውስጥ ከሌለ
+            error_msg = "⚠️ ይቅርታ፣ የጠየቁት ፋይል አልተገኘም (File not found)." if lang == "am" else "⚠️ Sorry, the requested file was not found."
+            bot.send_message(chat_id, error_msg, reply_markup=get_main_keyboard(lang))
+            
+        return # በሊንክ/parameter የመጣ ተጠቃሚ ወደ ቋንቋ መምረጫው እንዳይሄድ እዚሁ ይቋረጣል
 
-        file_notice = (
-            f"📥 {exam['name']}\n\n✨ ፈተናው ከታች ተልኮላችኋል 👇"
-            if lang == "am" else
-            f"📥 {exam['name']}\n\n✨ Your exam has been sent below 👇"
-        )
-        bot.send_message(chat_id, file_notice)
-        try:
-            # ፋይሉን ከዋናው ቻናል በቀጥታ ወደ ተጠቃሚው ይልካል
-            bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=CHANNEL_ID,
-                message_id=exam["msg_id"],
-                reply_markup=get_main_keyboard(lang)
-            )
-        except Exception as e:
-            bot.send_message(chat_id, f"Error: {e}", reply_markup=get_main_keyboard(lang))
-        return
-
-    # ተራ /start ሲላክ
+    # ምንም Parameter ሳይኖር ንጹህ /start ብቻ ሲመጣ (አዲስ ተጠቃሚ)
     bot.reply_to(
         message,
         f"ሰላም {message.from_user.first_name}!\n\n"
