@@ -1,14 +1,13 @@
 import os
 import threading
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # አስፈላጊ ከሆነ: pip install flask-cors
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 # --- Flask Server Setup ---
 app = Flask(__name__)
 
-# ለሁሉም origin ጥያቄዎችን እንዲቀበል (CORS fix)
+# ለሁሉም ጥያቄዎች CORS እንዲሰራ የሚፈቅድ
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -64,7 +63,6 @@ def track_user_info(user):
             with open(USERS_FILE, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split(" | ")
-                    # Format: id | name | username | downloads | ads
                     if len(parts) >= 5:
                         if parts[0] == user_id:
                             user_exists = True
