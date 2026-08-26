@@ -1,5 +1,10 @@
 import os
 import threading
+import hmac
+import hashlib
+import json
+import sqlite3
+from urllib.parse import parse_qsl
 from flask import Flask, request, jsonify
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, MenuButtonWebApp
@@ -15,9 +20,144 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
+# --- SQLite Database Setup for Coins ---
+def init_db():
+    conn = sqlite3.connect('database.sqlite')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS user_coins (
+        telegram_id TEXT PRIMARY KEY,
+        first_name TEXT,
+        coins INTEGER DEFAULT 300,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- TELEGRAM BOT CONFIGURATION ---
+BOT_TOKEN = "8908510416:AAHFV0V2wydcDc4ZKoNGgh5VsP7ceavHBwo"
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# የቴሌግራም initData ትክክለኛነት ማረጋገጫ (Anti-Cheat Verification)
+def verify_telegram_data(init_data):
+    if not init_data:
+        return None
+    try:
+        parsed = dict(parse_qsl(init_data))
+        received_hash = parsed.pop('hash', None)
+        if not received_hash:
+            return None
+
+        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+        if calc_hash == received_hash:
+            return json.loads(parsed.get('user', '{}'))
+    except Exception as e:
+        print(f"Verify error: {e}")
+    return None
+
 @app.route('/')
 def home():
     return "Bahirab Quiz Hub Bot is Running 24/7!"
+
+# 1. የተጠቃሚውን ነጥብ ማመሳሰል (Get Balance / Register)
+@app.route('/api/user/sync', methods=['POST'])
+def sync_user():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user = verify_telegram_data(data.get('initData'))
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        user_id = str(user.get('id'))
+        first_name = user.get('first_name', 'Student')
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        row = c.fetchone()
+
+        if row:
+            coins = row[0]
+        else:
+            coins = 300
+            c.execute('INSERT INTO user_coins (telegram_id, first_name, coins) VALUES (?, ?, ?)', (user_id, first_name, coins))
+            conn.commit()
+
+        conn.close()
+        return jsonify({"coins": coins}), 200
+    except Exception as e:
+        print(f"Sync error: {e}")
+        return jsonify({"error": "Server error"}), 500
+
+# 2. ነጥብ መቀነስ/መጨመር (Update Coins - Quiz / Ads)
+@app.route('/api/user/update-coins', methods=['POST'])
+def update_user_coins():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user = verify_telegram_data(data.get('initData'))
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        user_id = str(user.get('id'))
+        amount = int(data.get('amount', 0))
+
+        # የነጥብ መጠን ማረጋገጫ (አንድ ጊዜ ከ 150 በላይ እንዳይጨመር)
+        if amount > 150 or amount < -100:
+            return jsonify({"error": "Invalid amount"}), 400
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        row = c.fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+
+        new_coins = max(0, row[0] + amount)
+        c.execute('UPDATE user_coins SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "coins": new_coins}), 200
+    except Exception as e:
+        print(f"Update coins error: {e}")
+        return jsonify({"error": "Server error"}), 500
+
+# 3. ፈተና ወይም ሞጁል በ 100 Coins መክፈቻ API
+@app.route('/api/user/unlock-material', methods=['POST'])
+def unlock_material_api():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user = verify_telegram_data(data.get('initData'))
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        user_id = str(user.get('id'))
+        file_key = data.get('fileKey')
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        row = c.fetchone()
+
+        if not row or row[0] < 100:
+            conn.close()
+            return jsonify({"success": False, "message": "በቂ Coins የለዎትም!"}), 400
+
+        new_coins = row[0] - 100
+        c.execute('UPDATE user_coins SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "coins": new_coins, "fileKey": file_key}), 200
+    except Exception as e:
+        print(f"Unlock error: {e}")
+        return jsonify({"error": "Server error"}), 500
 
 # 📺 ተጠቃሚው አድ ሲያይ ከሚኒ አፑ መረጃ የሚቀበልበት API
 @app.route('/api/track-ad', methods=['POST'])
@@ -35,10 +175,6 @@ def track_ad_view():
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-# --- TELEGRAM BOT CONFIGURATION ---
-BOT_TOKEN = "8908510416:AAHFV0V2wydcDc4ZKoNGgh5VsP7ceavHBwo"
-bot = telebot.TeleBot(BOT_TOKEN)
 
 # 2ቱ ዋና ዋና ቻናሎች
 EXAMS_CHANNEL = "@BahirabAcademy"
