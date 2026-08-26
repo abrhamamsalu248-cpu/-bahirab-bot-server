@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import hmac
 import hashlib
 import json
@@ -703,6 +704,21 @@ def handle_start(message):
     )
 
 if __name__ == '__main__':
-    threading.Thread(target=run_flask).start()
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    print("✅ Web Server started...")
+
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception as e:
+        print(f"Webhook reset note: {e}")
+
     print("✅ Bahirab Quiz Hub Bot ዝግጁ ነው...")
-    bot.infinity_polling(none_stop=True)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
+        except Exception as e:
+            print(f"Polling conflict handled, retrying in 5s: {e}")
+            time.sleep(5)
