@@ -21,14 +21,35 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-# --- SQLite Database Setup for Coins ---
+# --- SQLite Database Setup ---
 def init_db():
     conn = sqlite3.connect('database.sqlite')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS user_coins (
+    # 1. የተጠቃሚዎች ሰንጠረዥ
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
         telegram_id TEXT PRIMARY KEY,
         first_name TEXT,
+        username TEXT,
         coins INTEGER DEFAULT 300,
+        downloads INTEGER DEFAULT 0,
+        ads_watched INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )''')
+    # 2. የተከፈቱ ፈተናዎች ሰንጠረዥ (Bypass መከላከያ)
+    c.execute('''CREATE TABLE IF NOT EXISTS unlocked_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT,
+        file_key TEXT,
+        unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(telegram_id, file_key)
+    )''')
+    # 3. የአስተያየቶች ሰንጠረዥ (.txt ፋይልን ሙሉ በሙሉ የሚተካ)
+    c.execute('''CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT,
+        first_name TEXT,
+        username TEXT,
+        message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     conn.commit()
@@ -36,9 +57,15 @@ def init_db():
 
 init_db()
 
-# --- TELEGRAM BOT CONFIGURATION ---
-BOT_TOKEN = "8908510416:AAHFV0V2wydcDc4ZKoNGgh5VsP7ceavHBwo"
+# --- CONFIGURATION (Environment Variables with Fallbacks) ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8908510416:AAHFV0V2wydcDc4ZKoNGgh5VsP7ceavHBwo")
+ADMIN_ID = os.environ.get("ADMIN_ID", "7105615214")
+WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
+EXAMS_CHANNEL = "@BahirabAcademy"
+MODULES_CHANNEL = "@bahirabquiz"
+
 bot = telebot.TeleBot(BOT_TOKEN)
+user_languages = {}
 
 # የቴሌግራም initData ትክክለኛነት ማረጋገጫ (Anti-Cheat Verification)
 def verify_telegram_data(init_data):
@@ -60,9 +87,27 @@ def verify_telegram_data(init_data):
         print(f"Verify error: {e}")
     return None
 
+def track_user_db(user):
+    try:
+        user_id = str(user.id)
+        name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
+        username = f"@{user.username}" if user.username else "No Username"
+        
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('''INSERT INTO users (telegram_id, first_name, username, coins)
+                     VALUES (?, ?, ?, 300)
+                     ON CONFLICT(telegram_id) DO UPDATE SET 
+                     first_name=excluded.first_name, 
+                     username=excluded.username''', (user_id, name, username))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"DB User Tracking error: {e}")
+
 @app.route('/')
 def home():
-    return "Bahirab Quiz Hub Bot is Running 24/7!"
+    return "Bahirab Quiz Hub Server is Running 24/7!"
 
 # 1. የተጠቃሚውን ነጥብ ማመሳሰል (Get Balance / Register)
 @app.route('/api/user/sync', methods=['POST'])
@@ -75,26 +120,92 @@ def sync_user():
 
         user_id = str(user.get('id'))
         first_name = user.get('first_name', 'Student')
+        username = f"@{user.get('username')}" if user.get('username') else "No Username"
 
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
         if row:
             coins = row[0]
+            c.execute('UPDATE users SET first_name = ?, username = ? WHERE telegram_id = ?', (first_name, username, user_id))
         else:
             coins = 300
-            c.execute('INSERT INTO user_coins (telegram_id, first_name, coins) VALUES (?, ?, ?)', (user_id, first_name, coins))
-            conn.commit()
-
+            c.execute('INSERT INTO users (telegram_id, first_name, username, coins) VALUES (?, ?, ?, ?)', (user_id, first_name, username, coins))
+            
+        conn.commit()
         conn.close()
         return jsonify({"coins": coins}), 200
     except Exception as e:
         print(f"Sync error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 2. ነጥብ መቀነስ/መጨመር (Update Coins - Quiz / Ads)
+# 2. የጥያቄ መልስ ነጥብ መመዝገቢያ (Quiz Answer Reward/Deduct)
+@app.route('/api/quiz/submit-answer', methods=['POST'])
+def handle_quiz_answer():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user = verify_telegram_data(data.get('initData'))
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        user_id = str(user.get('id'))
+        is_correct = bool(data.get('isCorrect', False))
+        coin_change = 5 if is_correct else -5
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
+        row = c.fetchone()
+        
+        if not row:
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+
+        new_coins = max(0, row[0] + coin_change)
+        c.execute('UPDATE users SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "coins": new_coins}), 200
+    except Exception as e:
+        print(f"Quiz submit error: {e}")
+        return jsonify({"error": "Server error"}), 500
+
+# 3. የማስታወቂያ ነጥብ መቀበያ (Ads Reward)
+@app.route('/api/ads/reward', methods=['POST'])
+def claim_ad_reward():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user = verify_telegram_data(data.get('initData'))
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        user_id = str(user.get('id'))
+        ad_type = data.get('adType')
+        reward = 150 if ad_type == 'adsgram' else 100
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
+        row = c.fetchone()
+        
+        if not row:
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+
+        new_coins = row[0] + reward
+        c.execute('UPDATE users SET coins = ?, ads_watched = ads_watched + 1 WHERE telegram_id = ?', (new_coins, user_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "coins": new_coins}), 200
+    except Exception as e:
+        print(f"Ad reward error: {e}")
+        return jsonify({"error": "Server error"}), 500
+
+# 4. ነጥብ መቀነስ/መጨመር (Legacy Endpoint Support)
 @app.route('/api/user/update-coins', methods=['POST'])
 def update_user_coins():
     try:
@@ -106,13 +217,12 @@ def update_user_coins():
         user_id = str(user.get('id'))
         amount = int(data.get('amount', 0))
 
-        # የነጥብ መጠን ማረጋገጫ (አንድ ጊዜ ከ 150 በላይ እንዳይጨመር)
         if amount > 150 or amount < -100:
             return jsonify({"error": "Invalid amount"}), 400
 
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
         if not row:
@@ -120,7 +230,7 @@ def update_user_coins():
             return jsonify({"error": "User not found"}), 404
 
         new_coins = max(0, row[0] + amount)
-        c.execute('UPDATE user_coins SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        c.execute('UPDATE users SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
         conn.commit()
         conn.close()
 
@@ -129,7 +239,7 @@ def update_user_coins():
         print(f"Update coins error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 3. ፈተና ወይም ሞጁል በ 100 Coins መክፈቻ API
+# 5. ፈተና ወይም ሞጁል በ 100 Coins መክፈቻ API (ከነ Bypass መከላከያ ምዝገባ)
 @app.route('/api/user/unlock-material', methods=['POST'])
 def unlock_material_api():
     try:
@@ -143,7 +253,7 @@ def unlock_material_api():
 
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('SELECT coins FROM user_coins WHERE telegram_id = ?', (user_id,))
+        c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
         if not row or row[0] < 100:
@@ -151,7 +261,8 @@ def unlock_material_api():
             return jsonify({"success": False, "message": "በቂ Coins የለዎትም!"}), 400
 
         new_coins = row[0] - 100
-        c.execute('UPDATE user_coins SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        c.execute('UPDATE users SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
+        c.execute('INSERT OR IGNORE INTO unlocked_materials (telegram_id, file_key) VALUES (?, ?)', (user_id, file_key))
         conn.commit()
         conn.close()
 
@@ -160,14 +271,18 @@ def unlock_material_api():
         print(f"Unlock error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 📺 ተጠቃሚው አድ ሲያይ ከሚኒ አፑ መረጃ የሚቀበልበት API
+# 6. Ad Tracking API
 @app.route('/api/track-ad', methods=['POST'])
 def track_ad_view():
     try:
         data = request.get_json(force=True, silent=True) or {}
         user_id = data.get('user_id')
         if user_id:
-            increment_user_ad(user_id)
+            conn = sqlite3.connect('database.sqlite')
+            c = conn.cursor()
+            c.execute('UPDATE users SET ads_watched = ads_watched + 1 WHERE telegram_id = ?', (str(user_id),))
+            conn.commit()
+            conn.close()
             return jsonify({"status": "success", "user_id": user_id}), 200
     except Exception as e:
         print(f"Track ad error: {e}")
@@ -177,14 +292,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# 2ቱ ዋና ዋና ቻናሎች
-EXAMS_CHANNEL = "@BahirabAcademy"
-MODULES_CHANNEL = "@bahirabquiz"
-
-WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
-ADMIN_ID = "7105615214"
-
-# ቋሚ የ Menu Button ማዘጋጃ (በቋሚነት ከታች የሚቀመጠው በተን)
+# ቋሚ የ Menu Button ማዘጋጃ
 try:
     bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(
@@ -195,112 +303,6 @@ try:
     )
 except Exception as e:
     print(f"Menu button setup error: {e}")
-
-USERS_FILE = "users_detailed.txt"
-FEEDBACK_FILE = "feedback.txt"
-user_languages = {}
-
-def track_user_info(user):
-    try:
-        user_id = str(user.id)
-        name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
-        username = f"@{user.username}" if user.username else "No Username"
-        
-        users_data = []
-        user_exists = False
-        
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split(" | ")
-                    if len(parts) >= 5:
-                        if parts[0] == user_id:
-                            user_exists = True
-                        users_data.append(line.strip())
-                    elif len(parts) == 4:
-                        if parts[0] == user_id:
-                            user_exists = True
-                        users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | {parts[3]} | 0")
-                    elif len(parts) >= 3:
-                        if parts[0] == user_id:
-                            user_exists = True
-                        users_data.append(f"{parts[0]} | {parts[1]} | {parts[2]} | 0 | 0")
-                            
-        if not user_exists:
-            users_data.append(f"{user_id} | {name} | {username} | 0 | 0")
-            
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            for item in users_data:
-                f.write(item + "\n")
-    except Exception as e:
-        print(f"Tracking error: {e}")
-
-def increment_user_download(user_id):
-    try:
-        user_id = str(user_id)
-        users_data = []
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split(" | ")
-                    if len(parts) >= 5:
-                        u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], int(parts[3]), int(parts[4])
-                        if u_id == user_id:
-                            u_dl += 1
-                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
-                    elif len(parts) >= 4:
-                        u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], int(parts[3])
-                        if u_id == user_id:
-                            u_dl += 1
-                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | 0")
-                    else:
-                        users_data.append(line.strip())
-                        
-            with open(USERS_FILE, "w", encoding="utf-8") as f:
-                for item in users_data:
-                    f.write(item + "\n")
-    except Exception as e:
-        print(f"Increment download error: {e}")
-
-def increment_user_ad(user_id):
-    try:
-        user_id = str(user_id)
-        users_data = []
-        user_found = False
-        
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split(" | ")
-                    if len(parts) >= 5:
-                        u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], int(parts[3]), int(parts[4])
-                        if u_id == user_id:
-                            u_ads += 1
-                            user_found = True
-                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
-                    elif len(parts) == 4:
-                        u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], int(parts[3])
-                        u_ads = 1 if u_id == user_id else 0
-                        if u_id == user_id:
-                            user_found = True
-                        users_data.append(f"{u_id} | {u_name} | {u_user} | {u_dl} | {u_ads}")
-                    else:
-                        users_data.append(line.strip())
-                        
-        if not user_found:
-            users_data.append(f"{user_id} | User | No Username | 0 | 1")
-            
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            for item in users_data:
-                f.write(item + "\n")
-    except Exception as e:
-        print(f"Increment ad error: {e}")
-
-def get_users_list():
-    if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
 
 EXAMS = {
     # --- EXAMS FROM @BahirabAcademy & @bahirabquiz ---
@@ -454,37 +456,25 @@ def get_lang_selection_keyboard():
     )
     return keyboard
 
-# --- STATS COMMAND ---
+# --- STATS COMMAND (SQLite Analytics) ---
 @bot.message_handler(commands=['stats', 'States', 'stat'])
 def handle_stats(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
     try:
-        users = get_users_list()
-        total_u = len(users)
-        
-        total_d = 0
-        total_a = 0
-        
-        recent_users = users[-20:]
-        lines = []
-        for u in users:
-            parts = u.split(" | ")
-            if len(parts) >= 5:
-                if parts[3].isdigit(): total_d += int(parts[3])
-                if parts[4].isdigit(): total_a += int(parts[4])
-            elif len(parts) >= 4:
-                if parts[3].isdigit(): total_d += int(parts[3])
-                
-        for u in recent_users:
-            parts = u.split(" | ")
-            if len(parts) >= 5:
-                u_id, u_name, u_user, u_dl, u_ads = parts[0], parts[1], parts[2], parts[3], parts[4]
-                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user})\n   ↳ 📥 {u_dl} ውርዶች | 📺 {u_ads} ማስታወቂያዎች")
-            elif len(parts) >= 4:
-                u_id, u_name, u_user, u_dl = parts[0], parts[1], parts[2], parts[3]
-                lines.append(f"• ID: {u_id} | 👤 {u_name} ({u_user})\n   ↳ 📥 {u_dl} ውርዶች | 📺 0 ማስታወቂያዎች")
-            else:
-                lines.append(f"• {u}")
-                
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*), SUM(downloads), SUM(ads_watched) FROM users')
+        totals = c.fetchone()
+        total_u = totals[0] or 0
+        total_d = totals[1] or 0
+        total_a = totals[2] or 0
+
+        c.execute('SELECT telegram_id, first_name, username, downloads, ads_watched FROM users ORDER BY created_at DESC LIMIT 20')
+        recent_users = c.fetchall()
+        conn.close()
+
+        lines = [f"• `{u[0]}` | {u[1]} ({u[2]})\n   ↳ 📥 {u[3] or 0} ውርዶች | 📺 {u[4] or 0} ማስታወቂያዎች" for u in recent_users]
         user_list_str = "\n\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
         
         stats_msg = (
@@ -517,18 +507,20 @@ def save_and_forward_feedback(message):
     chat_id = message.chat.id
     lang = user_languages.get(chat_id, "am")
     
-    # አስተያየቱን ሰርቨሩ ላይ ባለው የጽሑፍ ፋይል ውስጥ መዝግቦ መያዝ
     try:
-        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
-            f.write(f"ID: {user.id} | Name: {user.first_name} | Username: @{user.username} | Text: {feedback_text}\n")
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('INSERT INTO feedback (telegram_id, first_name, username, message) VALUES (?, ?, ?, ?)',
+                  (str(user.id), user.first_name, f"@{user.username}" if user.username else "No Username", feedback_text))
+        conn.commit()
+        conn.close()
     except Exception as err:
-        print(f"File log error: {err}")
+        print(f"DB log error: {err}")
 
-    # ለአድሚን የሚላከው ማሳወቂያ እና የመልስ መስጫ በተን (Reply Button)
     admin_notification = (
         "📩 አዲስ አስተያየት መጣ! (New Feedback)\n\n"
         f"👤 ከ: {user.first_name} (@{user.username if user.username else 'No Username'})\n"
-        f"🆔 ID: {user.id}\n\n"
+        f"🆔 ID: `{user.id}`\n\n"
         f"💬 አስተያየት፦\n{feedback_text}"
     )
     
@@ -540,7 +532,6 @@ def save_and_forward_feedback(message):
     except Exception as e:
         print(f"Admin forward warning: {e}")
 
-    # ለተጠቃሚው የተላከበትን ማረጋገጫ መስጠት
     success_msg = (
         "✅ እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ደርሶናል።"
         if lang == "am" else
@@ -577,9 +568,8 @@ def send_admin_reply_to_user(message, target_user_id):
         bot.send_message(int(target_user_id), header + reply_text, reply_markup=get_main_keyboard(user_lang))
         bot.reply_to(message, f"✅ መልስዎ ለተጠቃሚው (ID: {target_user_id}) በተሳካ ሁኔታ ተልኳል!")
     except Exception as e:
-        bot.reply_to(message, f"❌ መልሱን መላክ አልተቻለም (ምናልባት ተጠቃሚው ቦቱን ዘግቶት ሊሆን ይችላል)፦ {e}")
+        bot.reply_to(message, f"❌ መልሱን መላክ አልተቻለም፦ {e}")
 
-# በትእዛዝ ለመመለስ: /reply <user_id> <message>
 @bot.message_handler(commands=['reply'])
 def handle_reply_command(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -640,21 +630,44 @@ def handle_language_choice(call):
             reply_markup=get_main_keyboard("en")
         )
 
+# --- START COMMAND (with Major Bypass Check) ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     chat_id = message.chat.id
     user = message.from_user
     
-    track_user_info(user)
+    track_user_db(user)
     
     text_parts = message.text.split()
     
     if len(text_parts) > 1:
         file_key = text_parts[1]
         lang = user_languages.get(chat_id, "am")
+        user_id = str(user.id)
         
         if file_key in EXAMS:
-            increment_user_download(user.id)
+            # 🔒 የክፍያ ማረጋገጫ (ተጠቃሚው በ Mini App መክፈቱን ከዳታቤዝ ማረጋገጥ)
+            conn = sqlite3.connect('database.sqlite')
+            c = conn.cursor()
+            c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
+            is_unlocked = c.fetchone()
+            conn.close()
+
+            if not is_unlocked:
+                msg = (
+                    "⚠️ ይህንን ፈተና ለማውረድ መጀመሪያ በ Mini App ውስጥ በ 100 Coins መክፈት አለብዎት!"
+                    if lang == "am" else
+                    "⚠️ Please unlock this material for 100 Coins in the Mini App first!"
+                )
+                bot.send_message(chat_id, msg, reply_markup=get_main_keyboard(lang))
+                return
+
+            # ክፍያው የተረጋገጠ ከሆነ የዳውንሎድ ቁጥር መመዝገብ
+            conn = sqlite3.connect('database.sqlite')
+            c = conn.cursor()
+            c.execute('UPDATE users SET downloads = downloads + 1 WHERE telegram_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
             
             exam = EXAMS[file_key]
             channel_to_use = exam.get("channel", EXAMS_CHANNEL)
