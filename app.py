@@ -49,8 +49,6 @@ ADMIN_ID = "7105615214"
 
 USERS_FILE = "users_detailed.txt"
 FEEDBACK_FILE = "feedback.txt"
-total_downloads = 0
-total_ads_watched = 0
 user_languages = {}
 
 def track_user_info(user):
@@ -116,9 +114,7 @@ def increment_user_download(user_id):
         print(f"Increment download error: {e}")
 
 def increment_user_ad(user_id):
-    global total_ads_watched
     try:
-        total_ads_watched += 1
         user_id = str(user_id)
         users_data = []
         user_found = False
@@ -313,8 +309,19 @@ def handle_stats(message):
         users = get_users_list()
         total_u = len(users)
         
+        total_d = 0
+        total_a = 0
+        
         recent_users = users[-20:]
         lines = []
+        for u in users:
+            parts = u.split(" | ")
+            if len(parts) >= 5:
+                if parts[3].isdigit(): total_d += int(parts[3])
+                if parts[4].isdigit(): total_a += int(parts[4])
+            elif len(parts) >= 4:
+                if parts[3].isdigit(): total_d += int(parts[3])
+                
         for u in recent_users:
             parts = u.split(" | ")
             if len(parts) >= 5:
@@ -331,8 +338,8 @@ def handle_stats(message):
         stats_msg = (
             "📊 Bahirab Bot Analytics\n\n"
             f"👥 ጠቅላላ ተጠቃሚዎች: {total_u}\n"
-            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_downloads} ጊዜ\n"
-            f"📺 የታዩ ማስታወቂያዎች: {total_ads_watched} ጊዜ\n\n"
+            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_d} ጊዜ\n"
+            f"📺 የታዩ ማስታወቂያዎች: {total_a} ጊዜ\n\n"
             f"📝 የቅርብ ተጠቃሚዎች ዝርዝር፦\n\n{user_list_str}"
         )
         bot.send_message(message.chat.id, stats_msg)
@@ -365,7 +372,7 @@ def save_and_forward_feedback(message):
     except Exception as err:
         print(f"File log error: {err}")
 
-    # ንጹሕ የጽሁፍ መልእክት (ያለ Markdown ኤረር)
+    # ለአድሚን የሚላከው ማሳወቂያ እና የመልስ መስጫ በተን (Reply Button)
     admin_notification = (
         "📩 አዲስ አስተያየት መጣ! (New Feedback)\n\n"
         f"👤 ከ: {user.first_name} (@{user.username if user.username else 'No Username'})\n"
@@ -373,9 +380,11 @@ def save_and_forward_feedback(message):
         f"💬 አስተያየት፦\n{feedback_text}"
     )
     
-    # ለአድሚኑ መላክ (አድሚኑ ቦቱን ባይከፍተውም ለተጠቃሚው ስህተት እንዳይገጥመው ይከላከላል)
+    reply_kb = InlineKeyboardMarkup()
+    reply_kb.add(InlineKeyboardButton(text="↩️ ለተጠቃሚው መልስ ስጥ (Reply)", callback_data=f"admin_reply_{user.id}"))
+    
     try:
-        bot.send_message(int(ADMIN_ID), admin_notification)
+        bot.send_message(int(ADMIN_ID), admin_notification, reply_markup=reply_kb)
     except Exception as e:
         print(f"Admin forward warning: {e}")
 
@@ -386,6 +395,59 @@ def save_and_forward_feedback(message):
         "✅ Thank you! Your feedback has been successfully sent."
     )
     bot.reply_to(message, success_msg, reply_markup=get_main_keyboard(lang))
+
+# --- ADMIN REPLY BUTTON & COMMAND LOGIC ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_reply_"))
+def admin_reply_prompt(call):
+    if str(call.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(call.id, "ይህ ተግባር ለአድሚን ብቻ ነው!")
+        return
+
+    target_user_id = call.data.replace("admin_reply_", "")
+    sent = bot.send_message(
+        call.message.chat.id,
+        f"✍️ ለተጠቃሚው (ID: `{target_user_id}`) የሚልኩትን መልስ ጽፈው ይላኩ፦"
+    )
+    bot.register_next_step_handler(sent, send_admin_reply_to_user, target_user_id)
+
+def send_admin_reply_to_user(message, target_user_id):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+        
+    reply_text = message.text or ""
+    if not reply_text:
+        bot.reply_to(message, "⚠️ ባዶ መልእክት መላክ አይቻልም።")
+        return
+
+    try:
+        user_lang = user_languages.get(int(target_user_id), "am")
+        header = "📩 ከአስተዳዳሪው የተላከ መልስ፦\n\n" if user_lang == "am" else "📩 Reply from Admin:\n\n"
+        bot.send_message(int(target_user_id), header + reply_text, reply_markup=get_main_keyboard(user_lang))
+        bot.reply_to(message, f"✅ መልስዎ ለተጠቃሚው (ID: {target_user_id}) በተሳካ ሁኔታ ተልኳል!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ መልሱን መላክ አልተቻለም (ምናልባት ተጠቃሚው ቦቱን ዘግቶት ሊሆን ይችላል)፦ {e}")
+
+# በትእዛዝ ለመመለስ: /reply <user_id> <message>
+@bot.message_handler(commands=['reply'])
+def handle_reply_command(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/reply <USER_ID> <የመልስ_ጽሁፍ>`\n\nምሳሌ፦\n`/reply 12345678 ሰላም፣ ፈተናው ተስተካክሏል!`")
+        return
+
+    target_user_id = parts[1]
+    reply_text = parts[2]
+
+    try:
+        user_lang = user_languages.get(int(target_user_id), "am")
+        header = "📩 ከአስተዳዳሪው የተላከ መልስ፦\n\n" if user_lang == "am" else "📩 Reply from Admin:\n\n"
+        bot.send_message(int(target_user_id), header + reply_text, reply_markup=get_main_keyboard(user_lang))
+        bot.reply_to(message, f"✅ መልስዎ ለተጠቃሚው (ID: {target_user_id}) በተሳካ ሁኔታ ተልኳል!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ መልሱን መላክ አልተቻለም፦ {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_") or call.data == "change_lang")
 def handle_language_choice(call):
@@ -428,7 +490,6 @@ def handle_language_choice(call):
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    global total_downloads
     chat_id = message.chat.id
     user = message.from_user
     
@@ -441,7 +502,6 @@ def handle_start(message):
         lang = user_languages.get(chat_id, "am")
         
         if file_key in EXAMS:
-            total_downloads += 1
             increment_user_download(user.id)
             
             exam = EXAMS[file_key]
