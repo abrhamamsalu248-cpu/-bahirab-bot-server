@@ -2,7 +2,7 @@ import os
 import threading
 from flask import Flask, request, jsonify
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, MenuButtonWebApp
 
 # --- Flask Server Setup ---
 app = Flask(__name__)
@@ -46,6 +46,18 @@ MODULES_CHANNEL = "@bahirabquiz"
 
 WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
 ADMIN_ID = "7105615214"
+
+# ቋሚ የ Menu Button ማዘጋጃ (በቋሚነት ከታች የሚቀመጠው በተን)
+try:
+    bot.set_chat_menu_button(
+        menu_button=MenuButtonWebApp(
+            type="web_app",
+            text="📚 Open App",
+            web_app=WebAppInfo(url=WEB_APP_URL)
+        )
+    )
+except Exception as e:
+    print(f"Menu button setup error: {e}")
 
 USERS_FILE = "users_detailed.txt"
 FEEDBACK_FILE = "feedback.txt"
@@ -154,7 +166,7 @@ def get_users_list():
         return [line.strip() for line in f if line.strip()]
 
 EXAMS = {
-    # --- EXAMS FROM @BahirabAcademy ---
+    # --- EXAMS FROM @BahirabAcademy & @bahirabquiz ---
     "global_trend_2015": {"name": "Global Trend Final Exam 2015", "msg_id": 3, "type": "file", "channel": EXAMS_CHANNEL},
     "history_2015": {"name": "History Mid Exam 2015", "msg_id": 4, "type": "file", "channel": EXAMS_CHANNEL},
     "geography_final": {"name": "Geography Final Exam", "msg_id": 5, "type": "file", "channel": EXAMS_CHANNEL},
@@ -191,7 +203,20 @@ EXAMS = {
     "entrepreneurship_mid_2016": {"name": "Entrepreneurship Mid Exam 2016", "msg_id": 155, "type": "file", "channel": EXAMS_CHANNEL},
     "history_final_2015_b": {"name": "History Final Exam 2015", "msg_id": 163, "type": "file", "channel": EXAMS_CHANNEL},
     "math_natural_final": {"name": "Mathematics For Natural Final Exam", "msg_id": 165, "type": "file", "channel": EXAMS_CHANNEL},
-    "math_final_2016": {"name": "Mathematics Final Exam 2016", "msg_id": 167, "type": "link", "channel": EXAMS_CHANNEL},
+    
+    # 🔄 በፋይል የተተኩት 11ዱ ፈተናዎች (@bahirabquiz)
+    "geography_final_2016": {"name": "Geography Final Exam 2016", "msg_id": 20, "type": "file", "channel": MODULES_CHANNEL},
+    "math_final_2016": {"name": "Mathematics Final Exam 2016", "msg_id": 21, "type": "file", "channel": MODULES_CHANNEL},
+    "global_final_179": {"name": "Global Final Exam", "msg_id": 22, "type": "file", "channel": MODULES_CHANNEL},
+    "civics_final_187": {"name": "Civics Final Exam", "msg_id": 23, "type": "file", "channel": MODULES_CHANNEL},
+    "civics_final_192": {"name": "Civics Final Exam", "msg_id": 24, "type": "file", "channel": MODULES_CHANNEL},
+    "geography_final_213": {"name": "Geography Final Exam", "msg_id": 25, "type": "file", "channel": MODULES_CHANNEL},
+    "emerging_tech_2014": {"name": "Emerging Technology Final Exam 2014", "msg_id": 26, "type": "file", "channel": MODULES_CHANNEL},
+    "logic_final_219": {"name": "Logic Final Exam", "msg_id": 27, "type": "file", "channel": MODULES_CHANNEL},
+    "logic_final_818": {"name": "Logic Final Exam 2017", "msg_id": 28, "type": "file", "channel": MODULES_CHANNEL},
+    "comm_skills_one_823": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 29, "type": "file", "channel": MODULES_CHANNEL},
+    "logic_final_802": {"name": "Logic Final Exam", "msg_id": 30, "type": "file", "channel": MODULES_CHANNEL},
+
     "history_final_academy": {"name": "History Final Exam", "msg_id": 168, "type": "file", "channel": EXAMS_CHANNEL},
     "applied_math_one_final_b": {"name": "Applied Mathematics One Final Exam", "msg_id": 169, "type": "file", "channel": EXAMS_CHANNEL},
     "history_final_2016_2": {"name": "History 2016 Final Exam", "msg_id": 170, "type": "file", "channel": EXAMS_CHANNEL},
@@ -200,24 +225,17 @@ EXAMS = {
     "psychology_final": {"name": "General Psychology Final Exam", "msg_id": 175, "type": "file", "channel": EXAMS_CHANNEL},
     "global_final_176": {"name": "Global Final Exam", "msg_id": 176, "type": "file", "channel": EXAMS_CHANNEL},
     "global_trend_2015_b": {"name": "Global Trend Final Exam 2015", "msg_id": 177, "type": "file", "channel": EXAMS_CHANNEL},
-    "global_final_179": {"name": "Global Final Exam", "msg_id": 179, "type": "link", "channel": EXAMS_CHANNEL},
     "civics_final_2016": {"name": "Civics Final Exam 2016", "msg_id": 180, "type": "file", "channel": EXAMS_CHANNEL},
     "civics_final_2023": {"name": "Civics Final Exam 2023", "msg_id": 182, "type": "file", "channel": EXAMS_CHANNEL},
-    "civics_final_187": {"name": "Civics Final Exam", "msg_id": 187, "type": "link", "channel": EXAMS_CHANNEL},
-    "civics_final_192": {"name": "Civics Final Exam", "msg_id": 192, "type": "link", "channel": EXAMS_CHANNEL},
     "moral_civic_final_193": {"name": "Moral & Civic Education Final Exam", "msg_id": 193, "type": "file", "channel": EXAMS_CHANNEL},
     "econ_final_2016_b": {"name": "Economics Final Exam 2016", "msg_id": 196, "type": "file", "channel": EXAMS_CHANNEL},
     "econ_final_2013": {"name": "Economics Final Exam 2013", "msg_id": 197, "type": "file", "channel": EXAMS_CHANNEL},
     "econ_final_2015": {"name": "Economics Final Exam 2015", "msg_id": 198, "type": "file", "channel": EXAMS_CHANNEL},
-    "emerging_tech_2014": {"name": "Emerging Technology Final Exam 2014", "msg_id": 201, "type": "link", "channel": EXAMS_CHANNEL},
     "emerging_tech_2015": {"name": "Emerging Technology Final Exam 2015", "msg_id": 202, "type": "file", "channel": EXAMS_CHANNEL},
     "emerging_tech_203": {"name": "Emerging Technology Final Exam", "msg_id": 203, "type": "file", "channel": EXAMS_CHANNEL},
     "geography_final_204": {"name": "Geography Final Exam", "msg_id": 204, "type": "file", "channel": EXAMS_CHANNEL},
-    "geography_final_2016": {"name": "Geography Final Exam 2016", "msg_id": 210, "type": "link", "channel": EXAMS_CHANNEL},
-    "geography_final_213": {"name": "Geography Final Exam", "msg_id": 213, "type": "link", "channel": EXAMS_CHANNEL},
     "entrepreneurship_final_2016": {"name": "Entrepreneurship Final Exam 2016", "msg_id": 215, "type": "file", "channel": EXAMS_CHANNEL},
     "entrepreneurship_final_2015": {"name": "Entrepreneurship Final Exam 2015", "msg_id": 216, "type": "file", "channel": EXAMS_CHANNEL},
-    "logic_final_219": {"name": "Logic Final Exam", "msg_id": 219, "type": "link", "channel": EXAMS_CHANNEL},
     "logic_final_2014": {"name": "Logic Final Exam 2014", "msg_id": 220, "type": "file", "channel": EXAMS_CHANNEL},
     "logic_final_2021": {"name": "Logic Final Exam 2021", "msg_id": 221, "type": "file", "channel": EXAMS_CHANNEL},
     "anthro_final_2015": {"name": "Anthropology Final Exam 2015", "msg_id": 222, "type": "file", "channel": EXAMS_CHANNEL},
@@ -242,13 +260,10 @@ EXAMS = {
     "entrepreneurship_final_785": {"name": "Entrepreneurship Final Exam 2017", "msg_id": 785, "type": "file", "channel": EXAMS_CHANNEL},
     "psychology_final_793": {"name": "General Psychology Final Exam 2017", "msg_id": 793, "type": "file", "channel": EXAMS_CHANNEL},
     "psychology_final_794": {"name": "General Psychology Final Exam 2017 Other Semester", "msg_id": 794, "type": "file", "channel": EXAMS_CHANNEL},
-    "logic_final_802": {"name": "Logic Final Exam", "msg_id": 802, "type": "link", "channel": EXAMS_CHANNEL},
     "logic_final_808": {"name": "Logic Final Exam 2017", "msg_id": 808, "type": "file", "channel": EXAMS_CHANNEL},
     "logic_final_809": {"name": "Logic Final Exam 2017 Other Semester", "msg_id": 809, "type": "file", "channel": EXAMS_CHANNEL},
     "econ_final_814": {"name": "Economics Final Exam 2017", "msg_id": 814, "type": "file", "channel": EXAMS_CHANNEL},
-    "logic_final_818": {"name": "Logic Final Exam 2017", "msg_id": 818, "type": "link", "channel": EXAMS_CHANNEL},
     "comm_skills_one_822": {"name": "Communication Skills One English Final Exam", "msg_id": 822, "type": "file", "channel": EXAMS_CHANNEL},
-    "comm_skills_one_823": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 823, "type": "link", "channel": EXAMS_CHANNEL},
     "comm_skills_one_827": {"name": "Communication Skills One English Final Exam 2017", "msg_id": 827, "type": "file", "channel": EXAMS_CHANNEL},
     "psychology_final_2016": {"name": "General Psychology Final Exam", "msg_id": 175, "type": "file", "channel": EXAMS_CHANNEL},
     "english_final_2016": {"name": "Communication Skills English Final Exam", "msg_id": 174, "type": "file", "channel": EXAMS_CHANNEL},
