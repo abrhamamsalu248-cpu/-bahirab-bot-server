@@ -5,6 +5,8 @@ import hmac
 import hashlib
 import json
 import sqlite3
+import csv
+import io
 from urllib.parse import parse_qsl
 from flask import Flask, request, jsonify
 import telebot
@@ -519,6 +521,94 @@ def handle_stats(message):
         bot.send_message(message.chat.id, stats_msg)
     except Exception as e:
         bot.send_message(message.chat.id, f"Stats Error: {e}")
+
+# --- EXPORT COMMAND (Backup .sqlite & CSV) ---
+@bot.message_handler(commands=['export'])
+def export_sqlite_users(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    try:
+        # 1. database.sqlite ፋይልን በቀጥታ መላክ
+        if os.path.exists('database.sqlite'):
+            with open('database.sqlite', 'rb') as f:
+                bot.send_document(
+                    message.chat.id,
+                    f,
+                    caption="💾 የ SQLite ዳታቤዝ ሙሉ Backup ፋይል (database.sqlite)"
+                )
+
+        # 2. በ Excel/WPS የሚከፈት CSV ፋይል አዘጋጅቶ መላክ
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT * FROM users')
+        rows = c.fetchall()
+        headers = [desc[0] for desc in c.description]
+        conn.close()
+
+        if not rows:
+            bot.reply_to(message, "⚠️ በዳታቤዙ ውስጥ ምንም የተመዘገበ ተጠቃሚ የለም።")
+            return
+
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+        bio = io.BytesIO(csv_buffer.getvalue().encode('utf-8'))
+        bio.name = "all_users.csv"
+
+        bot.send_document(
+            message.chat.id,
+            bio,
+            caption=f"📊 የሁሉም ተጠቃሚዎች ዝርዝር CSV ሪፖርት (ጠቅላላ፦ {len(rows)} ተጠቃሚዎች)"
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት ተፈጥሯል፦ {e}")
+
+# --- FIND USER COMMAND ---
+@bot.message_handler(commands=['find'])
+def find_sqlite_user(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/find <USER_ID>`", parse_mode="Markdown")
+        return
+
+    target_id = parts[1].strip()
+
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT * FROM users WHERE telegram_id = ?', (target_id,))
+        user = c.fetchone()
+        headers = [desc[0] for desc in c.description] if user else []
+
+        # የተከፈቱ ፈተናዎችን ማውጣት
+        c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (target_id,))
+        unlocked_rows = c.fetchall()
+        unlocked_list = [r[0] for r in unlocked_rows]
+        conn.close()
+
+        if not user:
+            bot.reply_to(message, f"❌ ID `{target_id}` ያለው ተጠቃሚ አልተገኘም።", parse_mode="Markdown")
+            return
+
+        info_lines = [f"• <b>{headers[i]}:</b> {user[i]}" for i in range(len(headers))]
+        materials_str = ", ".join(unlocked_list) if unlocked_list else "ምንም አልከፈተም"
+        info_lines.append(f"• <b>unlocked_materials:</b> {materials_str}")
+
+        bot.send_message(
+            message.chat.id,
+            f"👤 <b>የተጠቃሚው ሙሉ መረጃ፦</b>\n\n" + "\n".join(info_lines),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት፦ {e}")
 
 # --- FEEDBACK BUTTON & HANDLER ---
 @bot.callback_query_handler(func=lambda call: call.data == "give_feedback")
