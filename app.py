@@ -451,7 +451,11 @@ EXAMS = {
     "mod_english_two": {"name": "Communicative English Skills II Module", "msg_id": 16, "type": "file", "channel": MODULES_CHANNEL},
     "mod_civics": {"name": "Moral and Citizenship Education Module", "msg_id": 17, "type": "file", "channel": MODULES_CHANNEL},
     "mod_math_natural": {"name": "Mathematics for Natural Science Module", "msg_id": 18, "type": "file", "channel": MODULES_CHANNEL},
-    "mod_math_social": {"name": "Mathematics for Social Sciences Module", "msg_id": 19, "type": "file", "channel": MODULES_CHANNEL}
+    "mod_math_social": {"name": "Mathematics for Social Sciences Module", "msg_id": 19, "type": "file", "channel": MODULES_CHANNEL},
+
+    # --- TEACHER GUIDES FROM @bahirabquiz ---
+    "guide_economics": {"name": "Economics Teacher Guide", "msg_id": 31, "type": "file", "channel": MODULES_CHANNEL},
+    "guide_mathematics": {"name": "Mathematics Teacher Guide", "msg_id": 32, "type": "file", "channel": MODULES_CHANNEL}
 }
 
 def get_main_keyboard(lang="am"):
@@ -701,7 +705,7 @@ def handle_reply_command(message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/reply <USER_ID> <የመልስ_ጽሁፍ>`\n\nምሳሌ፦\n`/reply 12345678 ሰላም፣ ፈተናው ተስተካክሏል!`")
+        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/reply <USER_ID>` <የመልስ_ጽሁፍ>\n\nምሳሌ፦\n`/reply 12345678 ሰላም፣ ፈተናው ተስተካክሏል!`")
         return
 
     target_user_id = parts[1]
