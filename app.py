@@ -124,7 +124,7 @@ def track_user_db(user):
 def home():
     return "Bahirab Quiz Hub Server is Running 24/7!"
 
-# 1. የተጠቃሚውን ነጥብ ማመሳሰል (Get Balance / Register)
+# 1. የተጠቃሚውን ነጥብ ማመሳሰል (Get Balance / Register & App Open Counter)
 @app.route('/api/user/sync', methods=['POST'])
 def sync_user():
     try:
@@ -145,7 +145,8 @@ def sync_user():
         if row:
             coins = row[0]
             q_count = row[1] or 0
-            c.execute('UPDATE users SET first_name = ?, username = ?, app_opened = 1 WHERE telegram_id = ?', (first_name, username, user_id))
+            # ተጠቃሚው አፑን በከፈተ ቁጥር app_opened በ 1 ይጨምራል
+            c.execute('UPDATE users SET first_name = ?, username = ?, app_opened = app_opened + 1 WHERE telegram_id = ?', (first_name, username, user_id))
         else:
             coins = 300
             q_count = 0
@@ -182,7 +183,7 @@ def handle_quiz_answer():
 
         new_coins = max(0, row[0] + coin_change)
         new_q_count = (row[1] or 0) + 1
-        c.execute('UPDATE users SET coins = ?, questions_answered = ?, app_opened = 1 WHERE telegram_id = ?', (new_coins, new_q_count, user_id))
+        c.execute('UPDATE users SET coins = ?, questions_answered = ? WHERE telegram_id = ?', (new_coins, new_q_count, user_id))
         conn.commit()
         conn.close()
 
@@ -474,7 +475,7 @@ def get_lang_selection_keyboard():
     )
     return keyboard
 
-# --- STATS COMMAND (SQLite Analytics) ---
+# --- STATS COMMAND (SQLite Analytics with App Open Count) ---
 @bot.message_handler(commands=['stats', 'States', 'stat'])
 def handle_stats(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -482,16 +483,17 @@ def handle_stats(message):
     try:
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('SELECT COUNT(*), SUM(downloads), SUM(ads_watched), SUM(questions_answered) FROM users')
+        c.execute('SELECT COUNT(*), SUM(downloads), SUM(ads_watched), SUM(questions_answered), SUM(app_opened) FROM users')
         totals = c.fetchone()
         total_u = totals[0] or 0
         total_d = totals[1] or 0
         total_a = totals[2] or 0
         total_q = totals[3] or 0
+        total_app_opens = totals[4] or 0
 
-        c.execute('SELECT COUNT(*) FROM users WHERE app_opened = 1')
-        both_count = c.fetchone()[0] or 0
-        bot_only_count = total_u - both_count
+        c.execute('SELECT COUNT(*) FROM users WHERE app_opened > 0')
+        active_app_users = c.fetchone()[0] or 0
+        bot_only_count = total_u - active_app_users
 
         c.execute('SELECT telegram_id, first_name, username, coins, questions_answered, downloads, ads_watched, app_opened FROM users ORDER BY created_at DESC LIMIT 20')
         recent_users = c.fetchall()
@@ -500,10 +502,9 @@ def handle_stats(message):
         lines = []
         for u in recent_users:
             uid, name, uname, coins, q_ans, dl, ads, app_op = u[0], u[1], u[2], u[3], u[4] or 0, u[5] or 0, u[6] or 0, u[7] or 0
-            status_badge = "📱 ሁለቱንም (Bot + App)" if app_op == 1 else "🤖 ቦት ብቻ (App አልከፈተም)"
             lines.append(
                 f"• `{uid}` | 👤 {name} ({uname})\n"
-                f"   ↳ 🏷️ ሁኔታ፦ {status_badge}\n"
+                f"   ↳ 📱 አፑን የከፈተው፦ {app_op} ጊዜ\n"
                 f"   ↳ 🪙 {coins} Coins | ✍️ {q_ans} ጥያቄዎች | 📥 {dl} ውርዶች | 📺 {ads} አዶች"
             )
         user_list_str = "\n\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
@@ -511,7 +512,8 @@ def handle_stats(message):
         stats_msg = (
             "📊 Bahirab Bot & App Analytics\n\n"
             f"👥 ጠቅላላ ተጠቃሚዎች: {total_u}\n"
-            f"📱 ሁለቱንም የተጠቀሙ: {both_count}\n"
+            f"📱 አፑን የከፈቱ ተጠቃሚዎች: {active_app_users}\n"
+            f"🔄 አፑ በጠቅላላ የተከፈተበት ብዛት: {total_app_opens} ጊዜ\n"
             f"🤖 ቦት ብቻ የተጠቀሙ: {bot_only_count}\n"
             f"✍️ ጠቅላላ የተመለሱ ጥያቄዎች: {total_q}\n"
             f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_d} ጊዜ\n"
