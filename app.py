@@ -258,7 +258,7 @@ def update_user_coins():
         print(f"Update coins error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 5. ፈተና ወይም ሞጁል በ 100 Coins መክፈቻ API (ከነ Bypass መከላከያ ምዝገባ)
+# 5. ፈተና ወይም ሞጁል (100 Coins) ወይም Teacher Guide (200 Coins) መክፈቻ API (ከነ Bypass መከላከያ ምዝገባ)
 @app.route('/api/user/unlock-material', methods=['POST'])
 def unlock_material_api():
     try:
@@ -270,16 +270,19 @@ def unlock_material_api():
         user_id = str(user.get('id'))
         file_key = data.get('fileKey')
 
+        # የ Teacher Guide ዋጋ 200 Coins፣ የሌሎች ማቴሪያሎች 100 Coins
+        cost = 200 if str(file_key).startswith("guide_") else 100
+
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
         c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
-        if not row or row[0] < 100:
+        if not row or row[0] < cost:
             conn.close()
-            return jsonify({"success": False, "message": "በቂ Coins የለዎትም!"}), 400
+            return jsonify({"success": False, "message": f"በቂ Coins የለዎትም! ({cost} Coins ያስፈልጋል)"}), 400
 
-        new_coins = row[0] - 100
+        new_coins = row[0] - cost
         c.execute('UPDATE users SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
         c.execute('INSERT OR IGNORE INTO unlocked_materials (telegram_id, file_key) VALUES (?, ?)', (user_id, file_key))
         conn.commit()
@@ -782,10 +785,11 @@ def handle_start(message):
             conn.close()
 
             if not is_unlocked:
+                required_coins = 200 if str(file_key).startswith("guide_") else 100
                 msg = (
-                    "⚠️ ይህንን ፈተና ለማውረድ መጀመሪያ በ Mini App ውስጥ በ 100 Coins መክፈት አለብዎት!"
+                    f"⚠️ ይህንን ማቴሪያል ለማውረድ መጀመሪያ በ Mini App ውስጥ በ {requiredCoins} Coins መክፈት አለብዎት!"
                     if lang == "am" else
-                    "⚠️ Please unlock this material for 100 Coins in the Mini App first!"
+                    f"⚠️ Please unlock this material for {requiredCoins} Coins in the Mini App first!"
                 )
                 bot.send_message(chat_id, msg, reply_markup=get_main_keyboard(lang))
                 return
