@@ -576,6 +576,31 @@ def export_sqlite_users(message):
     except Exception as e:
         bot.reply_to(message, f"❌ ስህተት ተፈጥሯል፦ {e}")
 
+# 🚀 አዲስ፦ የዳታቤዝ ፋይል በቴሌግራም በቀጥታ ወደ ሰርቨር መጫኛ (Instant Backup Restore)
+@bot.message_handler(content_types=['document'])
+def handle_db_restore(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    doc = message.document
+    if doc.file_name.endswith('.sqlite') or doc.file_name.endswith('.db'):
+        try:
+            file_info = bot.get_file(doc.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+
+            with open('database.sqlite', 'wb') as new_db:
+                new_db.write(downloaded_file)
+
+            conn = sqlite3.connect('database.sqlite')
+            c = conn.cursor()
+            c.execute('SELECT COUNT(*) FROM users')
+            count = c.fetchone()[0]
+            conn.close()
+
+            bot.reply_to(message, f"✅ ዳታቤዙ በተሳካ ሁኔታ ወደ ሰርቨሩ ተመልሷል (Restored)!\n\n👥 ጠቅላላ የተመለሱ ተጠቃሚዎች፦ {count}")
+        except Exception as e:
+            bot.reply_to(message, f"❌ ዳታቤዙን መመለስ አልተቻለም፦ {e}")
+
 # --- FIND USER COMMAND ---
 @bot.message_handler(commands=['find'])
 def find_sqlite_user(message):
