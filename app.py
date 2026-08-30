@@ -50,7 +50,7 @@ def init_db():
     except Exception:
         pass
 
-    # 2. የተከፈቱ ፈተናዎች ሰንጠረዥ (Bypass መከላከያ)
+    # 2. የተከፈቱ ፈተናዎች እና ኖቶች ሰንጠረዥ (Bypass መከላከያ)
     c.execute('''CREATE TABLE IF NOT EXISTS unlocked_materials (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id TEXT,
@@ -58,6 +58,7 @@ def init_db():
         unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(telegram_id, file_key)
     )''')
+    
     # 3. የአስተያየቶች ሰንጠረዥ (.txt ፋይልን ሙሉ በሙሉ የሚተካ)
     c.execute('''CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +125,7 @@ def track_user_db(user):
 def home():
     return "Bahirab Quiz Hub Server is Running 24/7!"
 
-# 1. የተጠቃሚውን ነጥብ ማመሳሰል (Get Balance / Register & App Open Counter)
+# 1. የተጠቃሚውን ነጥብ እና የተከፈቱ ኖቶችን ማመሳሰል (Get Balance / Register & App Open Counter)
 @app.route('/api/user/sync', methods=['POST'])
 def sync_user():
     try:
@@ -145,16 +146,23 @@ def sync_user():
         if row:
             coins = row[0]
             q_count = row[1] or 0
-            # ተጠቃሚው አፑን በከፈተ ቁጥር app_opened በ 1 ይጨምራል
             c.execute('UPDATE users SET first_name = ?, username = ?, app_opened = app_opened + 1 WHERE telegram_id = ?', (first_name, username, user_id))
         else:
             coins = 300
             q_count = 0
             c.execute('INSERT INTO users (telegram_id, first_name, username, coins, questions_answered, app_opened) VALUES (?, ?, ?, ?, ?, 1)', (user_id, first_name, username, coins, q_count))
             
+        # ተጠቃሚው ቀድሞ የከፈታቸውን ኖቶች እና ማቴሪያሎች በሙሉ ማውጣት
+        c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (user_id,))
+        unlocked_items = [r[0] for r in c.fetchall()]
+
         conn.commit()
         conn.close()
-        return jsonify({"coins": coins, "questions_answered": q_count}), 200
+        return jsonify({
+            "coins": coins, 
+            "questions_answered": q_count,
+            "unlocked": unlocked_items
+        }), 200
     except Exception as e:
         print(f"Sync error: {e}")
         return jsonify({"error": "Server error"}), 500
@@ -236,7 +244,7 @@ def update_user_coins():
         user_id = str(user.get('id'))
         amount = int(data.get('amount', 0))
 
-        if amount > 150 or amount < -100:
+        if amount > 150 or amount < -500:
             return jsonify({"error": "Invalid amount"}), 400
 
         conn = sqlite3.connect('database.sqlite')
@@ -258,7 +266,7 @@ def update_user_coins():
         print(f"Update coins error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 5. ፈተና ወይም ሞጁል (100 Coins) ወይም Teacher Guide (200 Coins) መክፈቻ API (ከነ Bypass መከላከያ ምዝገባ)
+# 5. ፈተና፣ ሞጁል (100 Coins)፣ Teacher Guide (200 Coins) ወይም Note (500 Coins) መክፈቻ API (ከነ ቅጽበታዊ Admin Notification ጋር)
 @app.route('/api/user/unlock-material', methods=['POST'])
 def unlock_material_api():
     try:
@@ -268,13 +276,32 @@ def unlock_material_api():
             return jsonify({"error": "Unauthorized"}), 401
 
         user_id = str(user.get('id'))
-        file_key = data.get('fileKey')
+        first_name = user.get('first_name', 'Student')
+        username = f"@{user.get('username')}" if user.get('username') else "No Username"
+        file_key = str(data.get('fileKey', ''))
 
-        # የ Teacher Guide ዋጋ 200 Coins፣ የሌሎች ማቴሪያሎች 100 Coins
-        cost = 200 if str(file_key).startswith("guide_") else 100
+        # የዋጋ ስሌት (Note ከሆነ 500 Coins፣ Guide ከሆነ 200 Coins፣ ሌሎች 100 Coins)
+        if file_key.startswith("note_") or data.get('cost') == 500:
+            cost = 500
+            item_type = "📖 Course Note"
+        elif file_key.startswith("guide_"):
+            cost = 200
+            item_type = "📖 Teacher Guide"
+        else:
+            cost = 100
+            item_type = "📥 Exam / Module"
 
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
+
+        # ቀድሞ የተገዛ ከሆነ ሳንቲም ሳይቀነስ የተከፈተ መሆኑን ማረጋገጥ
+        c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
+        if c.fetchone():
+            c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
+            current_coins = c.fetchone()[0]
+            conn.close()
+            return jsonify({"success": True, "coins": current_coins, "fileKey": file_key}), 200
+
         c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
@@ -287,6 +314,20 @@ def unlock_material_api():
         c.execute('INSERT OR IGNORE INTO unlocked_materials (telegram_id, file_key) VALUES (?, ?)', (user_id, file_key))
         conn.commit()
         conn.close()
+
+        # 🔔 ለአድሚኑ ወዲያውኑ የቴሌግራም መልእክት መላኪያ (Admin Notification)
+        try:
+            admin_alert = (
+                f"🎉 <b>አዲስ ማቴሪያል ተከፈተ!</b> ({item_type})\n\n"
+                f"👤 <b>ተማሪ፦</b> {first_name} ({username})\n"
+                f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                f"📚 <b>የከፈተው፦</b> <code>{file_key}</code>\n"
+                f"🪙 <b>የተከፈለው፦</b> {cost} Coins\n"
+                f"💰 <b>የቀረው Coins፦</b> {new_coins}"
+            )
+            bot.send_message(int(ADMIN_ID), admin_alert, parse_mode="HTML")
+        except Exception as alert_err:
+            print(f"Admin unlock alert error: {alert_err}")
 
         return jsonify({"success": True, "coins": new_coins, "fileKey": file_key}), 200
     except Exception as e:
@@ -531,6 +572,37 @@ def handle_stats(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"Stats Error: {e}")
 
+# 🚀 አዲስ፦ የተከፈቱ ኖቶችና ማቴሪያሎች ሙሉ ዝርዝር መመልከቻ ትዕዛዝ (/unlocked)
+@bot.message_handler(commands=['unlocked', 'purchases'])
+def list_all_unlocked(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('''
+            SELECT u.telegram_id, u.first_name, u.username, um.file_key, um.unlocked_at 
+            FROM unlocked_materials um
+            LEFT JOIN users u ON um.telegram_id = u.telegram_id
+            ORDER BY um.unlocked_at DESC LIMIT 40
+        ''')
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            bot.reply_to(message, "⚠️ እስካሁን ምንም የተከፈተ ኖት ወይም ማቴሪያል የለም።")
+            return
+
+        lines = []
+        for r in rows:
+            uid, name, uname, fkey, udate = r[0], r[1] or "Student", r[2] or "No Username", r[3], r[4]
+            lines.append(f"• 👤 <b>{name}</b> ({uname}) | <code>{uid}</code>\n  ↳ 📚 <code>{fkey}</code> ({udate})")
+
+        msg_text = "📋 <b>የተከፈቱ ኖቶችና ማቴሪያሎች ዝርዝር፦</b>\n\n" + "\n\n".join(lines)
+        bot.send_message(message.chat.id, msg_text, parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት፦ {e}")
+
 # --- EXPORT COMMAND (Backup .sqlite & CSV) ---
 @bot.message_handler(commands=['export'])
 def export_sqlite_users(message):
@@ -576,7 +648,7 @@ def export_sqlite_users(message):
     except Exception as e:
         bot.reply_to(message, f"❌ ስህተት ተፈጥሯል፦ {e}")
 
-# 🚀 አዲስ፦ የዳታቤዝ ፋይል በቴሌግራም በቀጥታ ወደ ሰርቨር መጫኛ (Instant Backup Restore)
+# 🚀 የዳታቤዝ ፋይል በቴሌግራም በቀጥታ ወደ ሰርቨር መጫኛ (Instant Backup Restore)
 @bot.message_handler(content_types=['document'])
 def handle_db_restore(message):
     if str(message.from_user.id) != str(ADMIN_ID):
