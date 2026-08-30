@@ -787,9 +787,9 @@ def handle_start(message):
             if not is_unlocked:
                 required_coins = 200 if str(file_key).startswith("guide_") else 100
                 msg = (
-                    f"⚠️ ይህንን ማቴሪያል ለማውረድ መጀመሪያ በ Mini App ውስጥ በ {requiredCoins} Coins መክፈት አለብዎት!"
+                    f"⚠️ ይህንን ማቴሪያል ለማውረድ መጀመሪያ በ Mini App ውስጥ በ {required_coins} Coins መክፈት አለብዎት!"
                     if lang == "am" else
-                    f"⚠️ Please unlock this material for {requiredCoins} Coins in the Mini App first!"
+                    f"⚠️ Please unlock this material for {required_coins} Coins in the Mini App first!"
                 )
                 bot.send_message(chat_id, msg, reply_markup=get_main_keyboard(lang))
                 return
