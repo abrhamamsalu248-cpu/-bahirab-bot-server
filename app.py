@@ -125,7 +125,7 @@ def track_user_db(user):
 def home():
     return "Bahirab Quiz Hub Server is Running 24/7!"
 
-# 1. የተጠቃሚውን ነጥብ እና የተከፈቱ ኖቶችን ማመሳሰል (Get Balance / Register & App Open Counter)
+# 1. የተጠቃሚውን ነጥብ እና የተከፈቱ ኖቶችን ማመሳሰል (ኖቶች ብቻ ቋሚ ስለሆኑ እነሱን ብቻ ያወጣል)
 @app.route('/api/user/sync', methods=['POST'])
 def sync_user():
     try:
@@ -152,8 +152,8 @@ def sync_user():
             q_count = 0
             c.execute('INSERT INTO users (telegram_id, first_name, username, coins, questions_answered, app_opened) VALUES (?, ?, ?, ?, ?, 1)', (user_id, first_name, username, coins, q_count))
             
-        # ተጠቃሚው ቀድሞ የከፈታቸውን ኖቶች እና ማቴሪያሎች በሙሉ ማውጣት
-        c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (user_id,))
+        # ኖቶች ብቻ ቋሚ (Permanent) ስለሆኑ የኖቶችን ዝርዝር ብቻ ለ Mini App ይልካል
+        c.execute("SELECT file_key FROM unlocked_materials WHERE telegram_id = ? AND file_key LIKE 'note_%'", (user_id,))
         unlocked_items = [r[0] for r in c.fetchall()]
 
         conn.commit()
@@ -266,7 +266,7 @@ def update_user_coins():
         print(f"Update coins error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 5. ፈተና፣ ሞጁል (100 Coins)፣ Teacher Guide (200 Coins) ወይም Note (500 Coins) መክፈቻ API (ከነ ቅጽበታዊ Admin Notification ጋር)
+# 5. ፈተና፣ ሞጁል (100 Coins)፣ Teacher Guide (200 Coins) ወይም Note (500 Coins) መክፈቻ API
 @app.route('/api/user/unlock-material', methods=['POST'])
 def unlock_material_api():
     try:
@@ -280,8 +280,10 @@ def unlock_material_api():
         username = f"@{user.get('username')}" if user.get('username') else "No Username"
         file_key = str(data.get('fileKey', ''))
 
-        # የዋጋ ስሌት (Note ከሆነ 500 Coins፣ Guide ከሆነ 200 Coins፣ ሌሎች 100 Coins)
-        if file_key.startswith("note_") or data.get('cost') == 500:
+        is_note = file_key.startswith("note_") or data.get('cost') == 500
+
+        # የዋጋ ስሌት
+        if is_note:
             cost = 500
             item_type = "📖 Course Note"
         elif file_key.startswith("guide_"):
@@ -294,14 +296,16 @@ def unlock_material_api():
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
 
-        # ቀድሞ የተገዛ ከሆነ ሳንቲም ሳይቀነስ የተከፈተ መሆኑን ማረጋገጥ
-        c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
-        if c.fetchone():
-            c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
-            current_coins = c.fetchone()[0]
-            conn.close()
-            return jsonify({"success": True, "coins": current_coins, "fileKey": file_key}), 200
+        # 💡 ኖት ከሆነ ብቻ ቀድሞ የተገዛ መሆኑን ቼክ ያደርጋል (ኖት ብቻ ቋሚ ስለሆነ)
+        if is_note:
+            c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
+            if c.fetchone():
+                c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
+                current_coins = c.fetchone()[0]
+                conn.close()
+                return jsonify({"success": True, "coins": current_coins, "fileKey": file_key}), 200
 
+        # ለፈተናዎች፣ ሞጁሎች እና Teacher Guides ሁልጊዜ ሳንቲም ይቀንሳል
         c.execute('SELECT coins FROM users WHERE telegram_id = ?', (user_id,))
         row = c.fetchone()
 
@@ -311,11 +315,11 @@ def unlock_material_api():
 
         new_coins = row[0] - cost
         c.execute('UPDATE users SET coins = ? WHERE telegram_id = ?', (new_coins, user_id))
-        c.execute('INSERT OR IGNORE INTO unlocked_materials (telegram_id, file_key) VALUES (?, ?)', (user_id, file_key))
+        c.execute('INSERT OR REPLACE INTO unlocked_materials (telegram_id, file_key) VALUES (?, ?)', (user_id, file_key))
         conn.commit()
         conn.close()
 
-        # 🔔 ለአድሚኑ ወዲያውኑ የቴሌግራም መልእክት መላኪያ (Admin Notification)
+        # 🔔 ለአድሚኑ ወዲያውኑ የቴሌግራም መልእክት መላኪያ
         try:
             admin_alert = (
                 f"🎉 <b>አዲስ ማቴሪያል ተከፈተ!</b> ({item_type})\n\n"
@@ -858,7 +862,7 @@ def handle_language_choice(call):
             reply_markup=get_main_keyboard("en")
         )
 
-# --- START COMMAND (with Major Bypass Check) ---
+# --- START COMMAND (with Major Bypass Check & One-Time Token Burn for Non-Notes) ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     chat_id = message.chat.id
@@ -879,9 +883,9 @@ def handle_start(message):
             c = conn.cursor()
             c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
             is_unlocked = c.fetchone()
-            conn.close()
 
             if not is_unlocked:
+                conn.close()
                 required_coins = 200 if str(file_key).startswith("guide_") else 100
                 msg = (
                     f"⚠️ ይህንን ማቴሪያል ለማውረድ መጀመሪያ በ Mini App ውስጥ በ {required_coins} Coins መክፈት አለብዎት!"
@@ -891,9 +895,11 @@ def handle_start(message):
                 bot.send_message(chat_id, msg, reply_markup=get_main_keyboard(lang))
                 return
 
-            # ክፍያው የተረጋገጠ ከሆነ የዳውንሎድ ቁጥር መመዝገብ
-            conn = sqlite3.connect('database.sqlite')
-            c = conn.cursor()
+            # 💡 ኖት ካልሆነ በስተቀር (ፈተና፣ ሞጁል፣ ጋይድ) ቦቱ ፋይሉን ሲልክ ወዲያውኑ ፈቃዱን ያጠፋዋል (ድጋሚ ሲያወርዱ ክፍያ እንዲጠይቅ)
+            if not file_key.startswith("note_"):
+                c.execute('DELETE FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
+
+            # የዳውንሎድ ቁጥር መመዝገብ
             c.execute('UPDATE users SET downloads = downloads + 1 WHERE telegram_id = ?', (user_id,))
             conn.commit()
             conn.close()
