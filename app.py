@@ -73,8 +73,8 @@ def init_db():
 
 init_db()
 
-# --- CONFIGURATION (Environment Variables with Fallbacks) ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8908510416:AAEGW56BSoDmzFfJOfBWqu3uZZORCQ5SuZs")
+# --- CONFIGURATION (Environment Variables) ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID", "7105615214")
 WEB_APP_URL = "https://abrhamamsalu248-cpu.github.io/Bahirab-Quiz/"
 EXAMS_CHANNEL = "@BahirabAcademy"
