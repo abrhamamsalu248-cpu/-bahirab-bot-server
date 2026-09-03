@@ -319,19 +319,22 @@ def unlock_material_api():
         conn.commit()
         conn.close()
 
-        # 🔔 ለአድሚኑ ወዲያውኑ የቴሌግራም መልእክት መላኪያ
-        try:
-            admin_alert = (
-                f"🎉 <b>አዲስ ማቴሪያል ተከፈተ!</b> ({item_type})\n\n"
-                f"👤 <b>ተማሪ፦</b> {first_name} ({username})\n"
-                f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
-                f"📚 <b>የከፈተው፦</b> <code>{file_key}</code>\n"
-                f"🪙 <b>የተከፈለው፦</b> {cost} Coins\n"
-                f"💰 <b>የቀረው Coins፦</b> {new_coins}"
-            )
-            bot.send_message(int(ADMIN_ID), admin_alert, parse_mode="HTML")
-        except Exception as alert_err:
-            print(f"Admin unlock alert error: {alert_err}")
+        # 🔔 ለአድሚኑ የሚላከውን መልእክት በጀርባ (Background Thread) ማስተላለፍ (ምላሹ እንዳይዘገይ)
+        def send_admin_alert():
+            try:
+                admin_alert = (
+                    f"🎉 <b>አዲስ ማቴሪያል ተከፈተ!</b> ({item_type})\n\n"
+                    f"👤 <b>ተማሪ፦</b> {first_name} ({username})\n"
+                    f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                    f"📚 <b>የከፈተው፦</b> <code>{file_key}</code>\n"
+                    f"🪙 <b>የተከፈለው፦</b> {cost} Coins\n"
+                    f"💰 <b>የቀረው Coins፦</b> {new_coins}"
+                )
+                bot.send_message(int(ADMIN_ID), admin_alert, parse_mode="HTML")
+            except Exception as alert_err:
+                print(f"Admin unlock alert error: {alert_err}")
+
+        threading.Thread(target=send_admin_alert).start()
 
         return jsonify({"success": True, "coins": new_coins, "fileKey": file_key}), 200
     except Exception as e:
@@ -725,6 +728,10 @@ def find_sqlite_user(message):
 def feedback_prompt(call):
     chat_id = call.message.chat.id
     lang = user_languages.get(chat_id, "am")
+    
+    # ቀድሞ የነበሩ የቆዩ የጥበቃ ሂደቶችን ማጽዳት
+    bot.clear_step_handler_by_chat_id(chat_id=chat_id)
+    
     prompt_text = (
         "✍️ እባክዎ ስለ ቦቱ፣ ፈተናዎች ወይም ማቴሪያሎች ያሎትን አስተያየት ወይም ጥያቄ ከዚህ በታች ይጻፉልን:"
         if lang == "am" else
@@ -739,6 +746,12 @@ def save_and_forward_feedback(message):
     chat_id = message.chat.id
     lang = user_languages.get(chat_id, "am")
     
+    # ተጠቃሚው የላከው ትዕዛዝ (Command) ከሆነ እንደ አስተያየት እንዳይቆጥረው መከላከል
+    if feedback_text.startswith('/'):
+        if feedback_text.startswith('/start'):
+            handle_start(message)
+        return
+
     try:
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
