@@ -38,6 +38,7 @@ def init_db():
         ads_watched INTEGER DEFAULT 0,
         questions_answered INTEGER DEFAULT 0,
         app_opened INTEGER DEFAULT 0,
+        is_blocked INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
@@ -50,6 +51,10 @@ def init_db():
         c.execute('ALTER TABLE users ADD COLUMN app_opened INTEGER DEFAULT 0')
     except Exception:
         pass
+    try:
+        c.execute('ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0')
+    except Exception:
+        pass
 
     # 2. የተከፈቱ ፈተናዎች እና ኖቶች ሰንጠረዥ (Bypass መከላከያ)
     c.execute('''CREATE TABLE IF NOT EXISTS unlocked_materials (
@@ -60,7 +65,7 @@ def init_db():
         UNIQUE(telegram_id, file_key)
     )''')
     
-    # 3. የአስተያየቶች ሰንጠረዥ (.txt ፋይልን ሙሉ በሙሉ የሚተካ)
+    # 3. የአስተያየቶች ሰንጠረዥ
     c.execute('''CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id TEXT,
@@ -69,6 +74,18 @@ def init_db():
         message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
+
+    # 4. የተሰጡ Reactions ሰንጠረዥ
+    c.execute('''CREATE TABLE IF NOT EXISTS reactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT,
+        first_name TEXT,
+        username TEXT,
+        message_id INTEGER,
+        emoji TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )''')
+
     conn.commit()
     conn.close()
 
@@ -112,11 +129,12 @@ def track_user_db(user):
         
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('''INSERT INTO users (telegram_id, first_name, username, coins)
-                     VALUES (?, ?, ?, 300)
+        c.execute('''INSERT INTO users (telegram_id, first_name, username, coins, is_blocked)
+                     VALUES (?, ?, ?, 300, 0)
                      ON CONFLICT(telegram_id) DO UPDATE SET 
                      first_name=excluded.first_name, 
-                     username=excluded.username''', (user_id, name, username))
+                     username=excluded.username,
+                     is_blocked=0''', (user_id, name, username))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -147,11 +165,11 @@ def sync_user():
         if row:
             coins = row[0]
             q_count = row[1] or 0
-            c.execute('UPDATE users SET first_name = ?, username = ?, app_opened = app_opened + 1 WHERE telegram_id = ?', (first_name, username, user_id))
+            c.execute('UPDATE users SET first_name = ?, username = ?, is_blocked = 0, app_opened = app_opened + 1 WHERE telegram_id = ?', (first_name, username, user_id))
         else:
             coins = 300
             q_count = 0
-            c.execute('INSERT INTO users (telegram_id, first_name, username, coins, questions_answered, app_opened) VALUES (?, ?, ?, ?, ?, 1)', (user_id, first_name, username, coins, q_count))
+            c.execute('INSERT INTO users (telegram_id, first_name, username, coins, questions_answered, app_opened, is_blocked) VALUES (?, ?, ?, ?, ?, 1, 0)', (user_id, first_name, username, coins, q_count))
             
         c.execute("SELECT file_key FROM unlocked_materials WHERE telegram_id = ? AND file_key LIKE 'note_%'", (user_id,))
         unlocked_items = [r[0] for r in c.fetchall()]
@@ -529,7 +547,7 @@ def get_lang_selection_keyboard():
     )
     return keyboard
 
-# --- STATS COMMAND (SQLite Analytics with App Open Count) ---
+# --- STATS COMMAND (SQLite Analytics with App Open, Blocked & Reactions Count) ---
 @bot.message_handler(commands=['stats', 'States', 'stat'])
 def handle_stats(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -545,38 +563,99 @@ def handle_stats(message):
         total_q = totals[3] or 0
         total_app_opens = totals[4] or 0
 
+        c.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1')
+        blocked_count = c.fetchone()[0] or 0
+        active_users_count = total_u - blocked_count
+
         c.execute('SELECT COUNT(*) FROM users WHERE app_opened > 0')
         active_app_users = c.fetchone()[0] or 0
         bot_only_count = total_u - active_app_users
 
-        c.execute('SELECT telegram_id, first_name, username, coins, questions_answered, downloads, ads_watched, app_opened FROM users ORDER BY created_at DESC LIMIT 20')
+        c.execute('SELECT COUNT(*) FROM reactions')
+        total_reactions = c.fetchone()[0] or 0
+
+        c.execute('SELECT telegram_id, first_name, username, coins, questions_answered, downloads, ads_watched, app_opened, is_blocked FROM users ORDER BY created_at DESC LIMIT 20')
         recent_users = c.fetchall()
         conn.close()
 
         lines = []
         for u in recent_users:
-            uid, name, uname, coins, q_ans, dl, ads, app_op = u[0], u[1], u[2], u[3], u[4] or 0, u[5] or 0, u[6] or 0, u[7] or 0
+            uid, name, uname, coins, q_ans, dl, ads, app_op, is_blk = u[0], u[1], u[2], u[3], u[4] or 0, u[5] or 0, u[6] or 0, u[7] or 0, u[8] or 0
+            status_tag = "🚫 [BLOCKED]" if is_blk == 1 else "🟢 [ACTIVE]"
             lines.append(
-                f"• `{uid}` | 👤 {name} ({uname})\n"
+                f"• `{uid}` | 👤 {name} ({uname}) {status_tag}\n"
                 f"   ↳ 📱 አፑን የከፈተው፦ {app_op} ጊዜ\n"
                 f"   ↳ 🪙 {coins} Coins | ✍️ {q_ans} ጥያቄዎች | 📥 {dl} ውርዶች | 📺 {ads} አዶች"
             )
         user_list_str = "\n\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
         
         stats_msg = (
-            "📊 Bahirab Bot & App Analytics\n\n"
-            f"👥 ጠቅላላ ተጠቃሚዎች: {total_u}\n"
-            f"📱 አፑን የከፈቱ ተጠቃሚዎች: {active_app_users}\n"
-            f"🔄 አፑ በጠቅላላ የተከፈተበት ብዛት: {total_app_opens} ጊዜ\n"
-            f"🤖 ቦት ብቻ የተጠቀሙ: {bot_only_count}\n"
-            f"✍️ ጠቅላላ የተመለሱ ጥያቄዎች: {total_q}\n"
-            f"📥 አጠቃላይ የተወረዱ ፈተናዎች: {total_d} ጊዜ\n"
-            f"📺 የታዩ ማስታወቂያዎች: {total_a} ጊዜ\n\n"
-            f"📝 የቅርብ ተጠቃሚዎች ዝርዝር፦\n\n{user_list_str}"
+            "📊 <b>Bahirab Bot & App Analytics</b>\n\n"
+            f"👥 <b>ጠቅላላ ተጠቃሚዎች፦</b> {total_u}\n"
+            f"🟢 <b>ንቁ ተጠቃሚዎች (Active)፦</b> {active_users_count}\n"
+            f"🚫 <b>ቦቱን ያገዱ (Blocked)፦</b> {blocked_count}\n"
+            f"📱 <b>አፑን የከፈቱ ተጠቃሚዎች፦</b> {active_app_users}\n"
+            f"🔄 <b>አፑ የተከፈተበት ድምር፦</b> {total_app_opens} ጊዜ\n"
+            f"🤖 <b>ቦት ብቻ የተጠቀሙ፦</b> {bot_only_count}\n"
+            f"✍️ <b>ጠቅላላ የተመለሱ ጥያቄዎች፦</b> {total_q}\n"
+            f"📥 <b>አጠቃላይ የተወረዱ ፈተናዎች፦</b> {total_d}\n"
+            f"📺 <b>የታዩ ማስታወቂያዎች፦</b> {total_a}\n"
+            f"💖 <b>የተሰጡ Reactions፦</b> {total_reactions} ጊዜ\n\n"
+            f"📝 <b>የቅርብ ተጠቃሚዎች ዝርዝር፦</b>\n\n{user_list_str}"
         )
-        bot.send_message(message.chat.id, stats_msg)
+        bot.send_message(message.chat.id, stats_msg, parse_mode="HTML")
     except Exception as e:
         bot.send_message(message.chat.id, f"Stats Error: {e}")
+
+# 🚀 አዲስ፦ ቦቱን Block ያደረጉ ተጠቃሚዎችን ዝርዝር ማሳያ (/blocked)
+@bot.message_handler(commands=['blocked'])
+def list_blocked_users(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT telegram_id, first_name, username FROM users WHERE is_blocked = 1 ORDER BY created_at DESC')
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            bot.reply_to(message, "✅ እስካሁን ቦቱን Block ያደረገ ምንም ተጠቃሚ የለም!")
+            return
+
+        lines = [f"• `{r[0]}` | 👤 {r[1]} ({r[2]})" for r in rows]
+        bot.send_message(
+            message.chat.id,
+            f"🚫 <b>ቦቱን Block ያደረጉ ተጠቃሚዎች ({len(rows)})፦</b>\n\n" + "\n".join(lines),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት፦ {e}")
+
+# 🚀 አዲስ፦ የተሰጡ Reactions ዝርዝር መመልከቻ (/reactions)
+@bot.message_handler(commands=['reactions'])
+def list_recent_reactions(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT telegram_id, first_name, username, emoji, created_at FROM reactions ORDER BY id DESC LIMIT 30')
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            bot.reply_to(message, "⚠️ እስካሁን ምንም የተሰጠ Reaction የለም።")
+            return
+
+        lines = [f"• {r[3]} | 👤 <b>{r[1]}</b> ({r[2]}) | <code>{r[0]}</code>\n  ↳ 🕒 <i>{r[4]}</i>" for r in rows]
+        bot.send_message(
+            message.chat.id,
+            f"💖 <b>የቅርብ ጊዜ Reactions ዝርዝር ({len(rows)})፦</b>\n\n" + "\n\n".join(lines),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት፦ {e}")
 
 # 🚀 አዲስ፦ የተከፈቱ ኖቶችና ማቴሪያሎች ሙሉ ዝርዝር መመልከቻ ትዕዛዝ (/unlocked)
 @bot.message_handler(commands=['unlocked', 'purchases'])
@@ -683,12 +762,12 @@ def handle_db_merge(message):
                 INSERT OR IGNORE INTO users (
                     telegram_id, first_name, username, coins, 
                     downloads, ads_watched, questions_answered, 
-                    app_opened, created_at
+                    app_opened, is_blocked, created_at
                 )
                 SELECT 
                     telegram_id, first_name, username, coins, 
                     downloads, ads_watched, questions_answered, 
-                    app_opened, created_at 
+                    app_opened, 0, created_at 
                 FROM old_db.users
             ''')
 
@@ -766,8 +845,18 @@ def send_broadcast_message(message):
                 )
                 success += 1
                 time.sleep(0.05)
-            except Exception:
+            except Exception as e:
                 failed += 1
+                err_str = str(e).lower()
+                if "blocked" in err_str or "deactivated" in err_str or "chat not found" in err_str:
+                    try:
+                        conn_b = sqlite3.connect('database.sqlite')
+                        c_b = conn_b.cursor()
+                        c_b.execute('UPDATE users SET is_blocked = 1 WHERE telegram_id = ?', (str(uid),))
+                        conn_b.commit()
+                        conn_b.close()
+                    except Exception:
+                        pass
 
         report = (
             "✅ <b>ብሮድካስት በተሳካ ሁኔታ ተጠናቋል!</b>\n\n"
@@ -837,7 +926,7 @@ def save_parsed_users(message, text):
         name_match = re.search(r'\|\s*(?:👤\s*)?([^(|\n]+)', block)
         name = name_match.group(1).strip() if name_match else "Student"
 
-        # 3. Username ማውጣት (በቅንፍ ውስጥም ይሁን በውጭ ያለውን @ በቀጥታ ይይዛል)
+        # Username ማውጣት (በመስመሩ ውስጥ የሚገኝ ማንኛውንም @username በቀጥታ ይይዛል)
         user_match = re.search(r'@([A-Za-z0-9_]+)', block)
         if user_match:
             username = f"@{user_match.group(1).strip()}"
@@ -857,8 +946,8 @@ def save_parsed_users(message, text):
         ads = int(ad_match.group(1)) if ad_match else 0
 
         c.execute('''
-            INSERT INTO users (telegram_id, first_name, username, coins, downloads, ads_watched, questions_answered, app_opened)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            INSERT INTO users (telegram_id, first_name, username, coins, downloads, ads_watched, questions_answered, app_opened, is_blocked)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)
             ON CONFLICT(telegram_id) DO UPDATE SET
                 first_name = excluded.first_name,
                 username = excluded.username,
@@ -880,6 +969,110 @@ def save_parsed_users(message, text):
         f"አሁን <code>/stats</code> በማለት የተጠቃሚዎችን ቁጥር ማረጋገጥ ትችላለህ።",
         parse_mode="HTML"
     )
+
+# --- 🚫 REAL-TIME BOT BLOCK & UNBLOCK TRACKING ---
+@bot.my_chat_member_handler()
+def handle_my_chat_member_update(update):
+    try:
+        user = update.from_user
+        if not user:
+            return
+        user_id = str(user.id)
+        name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
+        username = f"@{user.username}" if user.username else "No Username"
+        new_status = update.new_chat_member.status
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+
+        if new_status == 'kicked':
+            c.execute('UPDATE users SET is_blocked = 1 WHERE telegram_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
+
+            def alert_block():
+                try:
+                    alert = (
+                        f"🚫 <b>ቦቱ ተዘግቷል (Bot Blocked)!</b>\n\n"
+                        f"👤 <b>ተጠቃሚ፦</b> {name} ({username})\n"
+                        f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                        f"⚠️ ተጠቃሚው ቦቱን Block አድርጎታል!"
+                    )
+                    bot.send_message(int(ADMIN_ID), alert, parse_mode="HTML")
+                except Exception as e:
+                    print(f"Block alert error: {e}")
+            threading.Thread(target=alert_block).start()
+
+        elif new_status in ['member', 'administrator']:
+            c.execute('UPDATE users SET is_blocked = 0 WHERE telegram_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
+
+            def alert_unblock():
+                try:
+                    alert = (
+                        f"🟢 <b>ቦቱ ተከፍቷል (Bot Unblocked)!</b>\n\n"
+                        f"👤 <b>ተጠቃሚ፦</b> {name} ({username})\n"
+                        f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                        f"✨ ተጠቃሚው ቦቱን መልሶ ከፍቶታል!"
+                    )
+                    bot.send_message(int(ADMIN_ID), alert, parse_mode="HTML")
+                except Exception as e:
+                    print(f"Unblock alert error: {e}")
+            threading.Thread(target=alert_unblock).start()
+        else:
+            conn.close()
+    except Exception as e:
+        print(f"Chat member update error: {e}")
+
+# --- 💖 MESSAGE REACTION TRACKING (EMOJI LISTENER) ---
+@bot.message_reaction_handler()
+def handle_message_reactions(update):
+    try:
+        user = getattr(update, 'user', None) or getattr(update, 'from_user', None)
+        if not user:
+            return
+        user_id = str(user.id)
+        name = (user.first_name or "Student").replace("|", "-").replace("\n", " ")
+        username = f"@{user.username}" if user.username else "No Username"
+
+        new_reactions = getattr(update, 'new_reaction', []) or []
+        emojis = []
+        for r in new_reactions:
+            if hasattr(r, 'emoji'):
+                emojis.append(r.emoji)
+            elif isinstance(r, dict) and 'emoji' in r:
+                emojis.append(r['emoji'])
+        
+        emoji_str = " ".join(emojis)
+        if not emoji_str:
+            return
+
+        msg_id = getattr(update, 'message_id', 0)
+
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('''INSERT INTO reactions (telegram_id, first_name, username, message_id, emoji)
+                     VALUES (?, ?, ?, ?, ?)''', (user_id, name, username, msg_id, emoji_str))
+        conn.commit()
+        conn.close()
+
+        def notify_reaction():
+            try:
+                alert = (
+                    f"💖 <b>አዲስ Reaction ተሰጥቷል!</b>\n\n"
+                    f"👤 <b>ተጠቃሚ፦</b> {name} ({username})\n"
+                    f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                    f"✨ <b>Reaction፦</b> {emoji_str}\n"
+                    f"📩 <b>የመልዕክት ID፦</b> {msg_id}"
+                )
+                bot.send_message(int(ADMIN_ID), alert, parse_mode="HTML")
+            except Exception as e:
+                print(f"Reaction alert error: {e}")
+        threading.Thread(target=notify_reaction).start()
+
+    except Exception as e:
+        print(f"Reaction handler error: {e}")
 
 # --- FIND USER COMMAND ---
 @bot.message_handler(commands=['find'])
@@ -1174,7 +1367,12 @@ if __name__ == '__main__':
     print("✅ Bahirab Quiz Hub Bot ዝግጁ ነው...")
     while True:
         try:
-            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
+            bot.infinity_polling(
+                skip_pending=True, 
+                timeout=20, 
+                long_polling_timeout=20,
+                allowed_updates=['message', 'callback_query', 'my_chat_member', 'chat_member', 'message_reaction']
+            )
         except Exception as e:
             print(f"Polling conflict handled, retrying in 5s: {e}")
             time.sleep(5)
