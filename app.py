@@ -837,8 +837,12 @@ def save_parsed_users(message, text):
         name_match = re.search(r'\|\s*(?:👤\s*)?([^(|\n]+)', block)
         name = name_match.group(1).strip() if name_match else "Student"
 
-        user_match = re.search(r'\((@[A-Za-z0-9_]+\vert{}No Username)\)', block)
-        username = user_match.group(1).strip() if user_match else "No Username"
+        # 3. Username ማውጣት (በቅንፍ ውስጥም ይሁን በውጭ ያለውን @ በቀጥታ ይይዛል)
+        user_match = re.search(r'@([A-Za-z0-9_]+)', block)
+        if user_match:
+            username = f"@{user_match.group(1).strip()}"
+        else:
+            username = "No Username"
 
         coins_match = re.search(r'(\d+)\s*Coins', block)
         coins = int(coins_match.group(1)) if coins_match else 300
