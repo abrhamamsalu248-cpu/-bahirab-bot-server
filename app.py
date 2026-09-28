@@ -152,7 +152,6 @@ def sync_user():
             q_count = 0
             c.execute('INSERT INTO users (telegram_id, first_name, username, coins, questions_answered, app_opened) VALUES (?, ?, ?, ?, ?, 1)', (user_id, first_name, username, coins, q_count))
             
-        # ኖቶች ብቻ ቋሚ (Permanent) ስለሆኑ የኖቶችን ዝርዝር ብቻ ለ Mini App ይልካል
         c.execute("SELECT file_key FROM unlocked_materials WHERE telegram_id = ? AND file_key LIKE 'note_%'", (user_id,))
         unlocked_items = [r[0] for r in c.fetchall()]
 
@@ -200,7 +199,7 @@ def handle_quiz_answer():
         print(f"Quiz submit error: {e}")
         return jsonify({"error": "Server error"}), 500
 
-# 3. የማስታወቂያ ነጥብ መቀበያ (Ads Reward)
+# 3. የማስታወቂያ ነጥብ መቀበያ (Ads Reward - ሁለቱም Adsgram ስለሆኑ 150 ይሰጣል)
 @app.route('/api/ads/reward', methods=['POST'])
 def claim_ad_reward():
     try:
@@ -210,8 +209,7 @@ def claim_ad_reward():
             return jsonify({"error": "Unauthorized"}), 401
 
         user_id = str(user.get('id'))
-        ad_type = data.get('adType')
-        reward = 150 if ad_type == 'adsgram' else 100
+        reward = 150
 
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
@@ -655,9 +653,9 @@ def export_sqlite_users(message):
     except Exception as e:
         bot.reply_to(message, f"❌ ስህተት ተፈጥሯል፦ {e}")
 
-# 🚀 የዳታቤዝ ፋይል በቴሌግራም በቀጥታ ወደ ሰርቨር መጫኛ (Instant Backup Restore)
+# 🚀 የድሮውን ዳታቤዝ ከአዲሱ ጋር ማዋሃጃ / መጨመሪያ (Database Merge)
 @bot.message_handler(content_types=['document'])
-def handle_db_restore(message):
+def handle_db_merge(message):
     if str(message.from_user.id) != str(ADMIN_ID):
         return
 
@@ -667,18 +665,126 @@ def handle_db_restore(message):
             file_info = bot.get_file(doc.file_id)
             downloaded_file = bot.download_file(file_info.file_path)
 
-            with open('database.sqlite', 'wb') as new_db:
-                new_db.write(downloaded_file)
+            temp_filename = "temp_uploaded.sqlite"
+            with open(temp_filename, 'wb') as temp_f:
+                temp_f.write(downloaded_file)
 
-            conn = sqlite3.connect('database.sqlite')
-            c = conn.cursor()
-            c.execute('SELECT COUNT(*) FROM users')
-            count = c.fetchone()[0]
-            conn.close()
+            main_conn = sqlite3.connect('database.sqlite')
+            main_c = main_conn.cursor()
 
-            bot.reply_to(message, f"✅ ዳታቤዙ በተሳካ ሁኔታ ወደ ሰርቨሩ ተመልሷል (Restored)!\n\n👥 ጠቅላላ የተመለሱ ተጠቃሚዎች፦ {count}")
+            main_c.execute('SELECT COUNT(*) FROM users')
+            before_count = main_c.fetchone()[0]
+
+            main_c.execute(f"ATTACH DATABASE '{temp_filename}' AS old_db")
+
+            # 1. በአዲሱ ዳታቤዝ ውስጥ የሌሉ የድሮ ተጠቃሚዎችን ብቻ መርጦ መጨመር
+            main_c.execute('''
+                INSERT OR IGNORE INTO users (
+                    telegram_id, first_name, username, coins, 
+                    downloads, ads_watched, questions_answered, 
+                    app_opened, created_at
+                )
+                SELECT 
+                    telegram_id, first_name, username, coins, 
+                    downloads, ads_watched, questions_answered, 
+                    app_opened, created_at 
+                FROM old_db.users
+            ''')
+
+            # 2. ቀድመው የተከፈቱ ማቴሪያሎችን ሳያጠፋ ማዋሃድ
+            try:
+                main_c.execute('''
+                    INSERT OR IGNORE INTO unlocked_materials (telegram_id, file_key, unlocked_at)
+                    SELECT telegram_id, file_key, unlocked_at FROM old_db.unlocked_materials
+                ''')
+            except Exception:
+                pass
+
+            main_conn.commit()
+
+            main_c.execute('SELECT COUNT(*) FROM users')
+            after_count = main_c.fetchone()[0]
+
+            main_c.execute("DETACH DATABASE old_db")
+            main_conn.close()
+
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+
+            added_users = after_count - before_count
+            bot.reply_to(
+                message,
+                f"✅ <b>ዳታቤዙ በተሳካ ሁኔታ ተዋህዷል (Merged)!</b>\n\n"
+                f"➕ <b>አዲስ የተጨመሩ የድሮ ተጠቃሚዎች፦</b> {added_users}\n"
+                f"👥 <b>አጠቃላይ አሁን በዳታቤዝ ያሉ ተጠቃሚዎች፦</b> {after_count}",
+                parse_mode="HTML"
+            )
         except Exception as e:
-            bot.reply_to(message, f"❌ ዳታቤዙን መመለስ አልተቻለም፦ {e}")
+            bot.reply_to(message, f"❌ ዳታቤዙን ማዋሃድ አልተቻለም፦ {e}")
+
+# --- 📢 BROADCAST COMMAND (መልዕክት ለሁሉም ተጠቃሚዎች መላኪያ) ---
+@bot.message_handler(commands=['broadcast', 'announce'])
+def broadcast_prompt(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    sent = bot.reply_to(
+        message, 
+        "📢 <b>የብሮድካስት መልዕክት ማስተላለፊያ</b>\n\n"
+        "ለሁሉም ተማሪዎች የሚተላለፈውን መልዕክት ጽፈህ ላክ (ጽሑፍ፣ ፎቶ ከነ ጽሑፉ ወይም ቪዲዮ ሊሆን ይችላል)፦",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(sent, send_broadcast_message)
+
+def send_broadcast_message(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    if message.text and message.text.startswith('/'):
+        bot.reply_to(message, "❌ የብሮድካስት ስራው ተሰርዟል።")
+        return
+
+    status_msg = bot.reply_to(message, "⏳ መልዕክቱ ለሁሉም ተጠቃሚዎች በመላክ ላይ ነው... እባክህ በትዕግስት ጠብቅ።")
+
+    def broadcast_worker():
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT telegram_id FROM users')
+        users = c.fetchall()
+        conn.close()
+
+        success = 0
+        failed = 0
+
+        for (uid,) in users:
+            try:
+                bot.copy_message(
+                    chat_id=int(uid),
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+                success += 1
+                time.sleep(0.05)
+            except Exception:
+                failed += 1
+
+        report = (
+            "✅ <b>ብሮድካስት በተሳካ ሁኔታ ተጠናቋል!</b>\n\n"
+            f"👥 ጠቅላላ ተጠቃሚዎች፦ {len(users)}\n"
+            f"✔️ የደረሳቸው፦ {success}\n"
+            f"❌ ያልደረሳቸው (ቦቱን የዘጉ/ያገዱ)፦ {failed}"
+        )
+        try:
+            bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=status_msg.message_id,
+                text=report,
+                parse_mode="HTML"
+            )
+        except Exception:
+            bot.send_message(message.chat.id, report, parse_mode="HTML")
+
+    threading.Thread(target=broadcast_worker).start()
 
 # --- FIND USER COMMAND ---
 @bot.message_handler(commands=['find'])
@@ -700,7 +806,6 @@ def find_sqlite_user(message):
         user = c.fetchone()
         headers = [desc[0] for desc in c.description] if user else []
 
-        # የተከፈቱ ፈተናዎችን ማውጣት
         c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (target_id,))
         unlocked_rows = c.fetchall()
         unlocked_list = [r[0] for r in unlocked_rows]
@@ -729,7 +834,6 @@ def feedback_prompt(call):
     chat_id = call.message.chat.id
     lang = user_languages.get(chat_id, "am")
     
-    # ቀድሞ የነበሩ የቆዩ የጥበቃ ሂደቶችን ማጽዳት
     bot.clear_step_handler_by_chat_id(chat_id=chat_id)
     
     prompt_text = (
@@ -746,7 +850,6 @@ def save_and_forward_feedback(message):
     chat_id = message.chat.id
     lang = user_languages.get(chat_id, "am")
     
-    # ተጠቃሚው የላከው ትዕዛዝ (Command) ከሆነ እንደ አስተያየት እንዳይቆጥረው መከላከል
     if feedback_text.startswith('/'):
         if feedback_text.startswith('/start'):
             handle_start(message)
@@ -891,7 +994,6 @@ def handle_start(message):
         user_id = str(user.id)
         
         if file_key in EXAMS:
-            # 🔒 የክፍያ ማረጋገጫ (ተጠቃሚው በ Mini App መክፈቱን ከዳታቤዝ ማረጋገጥ)
             conn = sqlite3.connect('database.sqlite')
             c = conn.cursor()
             c.execute('SELECT 1 FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
@@ -908,11 +1010,9 @@ def handle_start(message):
                 bot.send_message(chat_id, msg, reply_markup=get_main_keyboard(lang))
                 return
 
-            # 💡 ኖት ካልሆነ በስተቀር (ፈተና፣ ሞጁል፣ ጋይድ) ቦቱ ፋይሉን ሲልክ ወዲያውኑ ፈቃዱን ያጠፋዋል (ድጋሚ ሲያወርዱ ክፍያ እንዲጠይቅ)
             if not file_key.startswith("note_"):
                 c.execute('DELETE FROM unlocked_materials WHERE telegram_id = ? AND file_key = ?', (user_id, file_key))
 
-            # የዳውንሎድ ቁጥር መመዝገብ
             c.execute('UPDATE users SET downloads = downloads + 1 WHERE telegram_id = ?', (user_id,))
             conn.commit()
             conn.close()
