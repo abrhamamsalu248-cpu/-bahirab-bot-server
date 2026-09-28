@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 import time
 import hmac
@@ -785,6 +786,96 @@ def send_broadcast_message(message):
             bot.send_message(message.chat.id, report, parse_mode="HTML")
 
     threading.Thread(target=broadcast_worker).start()
+
+# --- 📥 IMPORT USERS FROM TEXT COMMAND (/import_text, /import_stats) ---
+@bot.message_handler(commands=['import_text', 'import_stats'])
+def import_from_stats_text(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    target_text = ""
+    if message.reply_to_message and message.reply_to_message.text:
+        target_text = message.reply_to_message.text
+    else:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1:
+            target_text = parts[1]
+        else:
+            sent = bot.reply_to(
+                message, 
+                "✍️ እባክህ ያንን የተጠቃሚዎች ዝርዝር የያዘውን ጽሑፍ ኮፒ አድርገህ እዚህ ላክልኝ (ወይም መልዕክቱን Reply አድርገህ `/import_text` በለው)፦"
+            )
+            bot.register_next_step_handler(sent, process_pasted_text)
+            return
+
+    save_parsed_users(message, target_text)
+
+def process_pasted_text(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    if message.text and message.text.startswith('/'):
+        bot.reply_to(message, "❌ ተሰርዟል።")
+        return
+    save_parsed_users(message, message.text or "")
+
+def save_parsed_users(message, text):
+    blocks = re.split(r'\n(?=•\s*[`\d])', text)
+    if len(blocks) <= 1 and not text.strip().startswith('•'):
+        blocks = text.split('\n\n')
+
+    conn = sqlite3.connect('database.sqlite')
+    c = conn.cursor()
+    added_count = 0
+    updated_count = 0
+
+    for block in blocks:
+        id_match = re.search(r'[`•\s](\d{8,12})[`\s|]', block) or re.search(r'(\d{8,12})', block)
+        if not id_match:
+            continue
+        user_id = id_match.group(1).strip()
+
+        name_match = re.search(r'\|\s*(?:👤\s*)?([^(|\n]+)', block)
+        name = name_match.group(1).strip() if name_match else "Student"
+
+        user_match = re.search(r'\((@[A-Za-z0-9_]+\vert{}No Username)\)', block)
+        username = user_match.group(1).strip() if user_match else "No Username"
+
+        coins_match = re.search(r'(\d+)\s*Coins', block)
+        coins = int(coins_match.group(1)) if coins_match else 300
+
+        q_match = re.search(r'(\d+)\s*ጥያቄዎች', block)
+        q_ans = int(q_match.group(1)) if q_match else 0
+
+        dl_match = re.search(r'(\d+)\s*ውርዶች', block)
+        dl = int(dl_match.group(1)) if dl_match else 0
+
+        ad_match = re.search(r'(\d+)\s*አዶች', block)
+        ads = int(ad_match.group(1)) if ad_match else 0
+
+        c.execute('''
+            INSERT INTO users (telegram_id, first_name, username, coins, downloads, ads_watched, questions_answered, app_opened)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                first_name = excluded.first_name,
+                username = excluded.username,
+                coins = excluded.coins
+        ''', (user_id, name, username, coins, dl, ads, q_ans))
+
+        if c.rowcount > 0:
+            added_count += 1
+        else:
+            updated_count += 1
+
+    conn.commit()
+    conn.close()
+
+    bot.reply_to(
+        message,
+        f"✅ <b>ተጠቃሚዎች በተሳካ ሁኔታ ተመዝግበዋል!</b>\n\n"
+        f"👥 <b>ጠቅላላ የተጨመሩ/የተስተካከሉ፦</b> {added_count + updated_count} ተማሪዎች\n\n"
+        f"አሁን <code>/stats</code> በማለት የተጠቃሚዎችን ቁጥር ማረጋገጥ ትችላለህ።",
+        parse_mode="HTML"
+    )
 
 # --- FIND USER COMMAND ---
 @bot.message_handler(commands=['find'])
