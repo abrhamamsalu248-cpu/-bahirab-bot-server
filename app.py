@@ -38,7 +38,9 @@ def init_db():
         ads_watched INTEGER DEFAULT 0,
         questions_answered INTEGER DEFAULT 0,
         app_opened INTEGER DEFAULT 0,
+        bot_interactions INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
+        lang TEXT DEFAULT 'am',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
@@ -55,6 +57,14 @@ def init_db():
         c.execute('ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0')
     except Exception:
         pass
+    try:
+        c.execute('ALTER TABLE users ADD COLUMN bot_interactions INTEGER DEFAULT 0')
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'am'")
+    except Exception:
+        pass
 
     # 2. የተከፈቱ ፈተናዎች እና ኖቶች ሰንጠረዥ (Bypass መከላከያ)
     c.execute('''CREATE TABLE IF NOT EXISTS unlocked_materials (
@@ -65,7 +75,7 @@ def init_db():
         UNIQUE(telegram_id, file_key)
     )''')
     
-    # 3. የአስተያየቶች ሰንጠረዥ
+    # 3. የአስተያየቶች ሰንጠረዥ (.txt ፋይልን ሙሉ በሙሉ የሚተካ)
     c.execute('''CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id TEXT,
@@ -100,6 +110,24 @@ MODULES_CHANNEL = "@bahirabquiz"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 user_languages = {}
+
+# የተጠቃሚውን ቋንቋ ማግኛ ረዳት ፈንክሽን
+def get_user_lang(user_id):
+    uid_str = str(user_id)
+    if uid_str in user_languages:
+        return user_languages[uid_str]
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('SELECT lang FROM users WHERE telegram_id = ?', (uid_str,))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0]:
+            user_languages[uid_str] = row[0]
+            return row[0]
+    except Exception:
+        pass
+    return "am"
 
 # የቴሌግራም initData ትክክለኛነት ማረጋገጫ (Anti-Cheat Verification)
 def verify_telegram_data(init_data):
@@ -139,6 +167,17 @@ def track_user_db(user):
         conn.close()
     except Exception as e:
         print(f"DB User Tracking error: {e}")
+
+# የቦት በተን ንክኪዎችን መዝጋቢ
+def record_bot_interaction(user_id):
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('UPDATE users SET bot_interactions = bot_interactions + 1 WHERE telegram_id = ?', (str(user_id),))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Interaction record error: {e}")
 
 @app.route('/')
 def home():
@@ -547,7 +586,7 @@ def get_lang_selection_keyboard():
     )
     return keyboard
 
-# --- STATS COMMAND (SQLite Analytics with App Open, Blocked & Reactions Count) ---
+# --- STATS COMMAND (SQLite Analytics with App Open, Blocked, Reactions & Interactions Count) ---
 @bot.message_handler(commands=['stats', 'States', 'stat'])
 def handle_stats(message):
     if str(message.from_user.id) != str(ADMIN_ID):
@@ -555,13 +594,14 @@ def handle_stats(message):
     try:
         conn = sqlite3.connect('database.sqlite')
         c = conn.cursor()
-        c.execute('SELECT COUNT(*), SUM(downloads), SUM(ads_watched), SUM(questions_answered), SUM(app_opened) FROM users')
+        c.execute('SELECT COUNT(*), SUM(downloads), SUM(ads_watched), SUM(questions_answered), SUM(app_opened), SUM(bot_interactions) FROM users')
         totals = c.fetchone()
         total_u = totals[0] or 0
         total_d = totals[1] or 0
         total_a = totals[2] or 0
         total_q = totals[3] or 0
         total_app_opens = totals[4] or 0
+        total_bot_clicks = totals[5] or 0
 
         c.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1')
         blocked_count = c.fetchone()[0] or 0
@@ -574,17 +614,17 @@ def handle_stats(message):
         c.execute('SELECT COUNT(*) FROM reactions')
         total_reactions = c.fetchone()[0] or 0
 
-        c.execute('SELECT telegram_id, first_name, username, coins, questions_answered, downloads, ads_watched, app_opened, is_blocked FROM users ORDER BY created_at DESC LIMIT 20')
+        c.execute('SELECT telegram_id, first_name, username, coins, questions_answered, downloads, ads_watched, app_opened, bot_interactions, is_blocked FROM users ORDER BY created_at DESC LIMIT 20')
         recent_users = c.fetchall()
         conn.close()
 
         lines = []
         for u in recent_users:
-            uid, name, uname, coins, q_ans, dl, ads, app_op, is_blk = u[0], u[1], u[2], u[3], u[4] or 0, u[5] or 0, u[6] or 0, u[7] or 0, u[8] or 0
+            uid, name, uname, coins, q_ans, dl, ads, app_op, b_intr, is_blk = u[0], u[1], u[2], u[3], u[4] or 0, u[5] or 0, u[6] or 0, u[7] or 0, u[8] or 0, u[9] or 0
             status_tag = "🚫 [BLOCKED]" if is_blk == 1 else "🟢 [ACTIVE]"
             lines.append(
                 f"• `{uid}` | 👤 {name} ({uname}) {status_tag}\n"
-                f"   ↳ 📱 አፑን የከፈተው፦ {app_op} ጊዜ\n"
+                f"   ↳ 📱 አፑን የከፈተው፦ {app_op} ጊዜ | 🔘 የቦት ንክኪ፦ {b_intr} ጊዜ\n"
                 f"   ↳ 🪙 {coins} Coins | ✍️ {q_ans} ጥያቄዎች | 📥 {dl} ውርዶች | 📺 {ads} አዶች"
             )
         user_list_str = "\n\n".join(lines) if lines else "ምንም ተጠቃሚ የለም"
@@ -596,6 +636,7 @@ def handle_stats(message):
             f"🚫 <b>ቦቱን ያገዱ (Blocked)፦</b> {blocked_count}\n"
             f"📱 <b>አፑን የከፈቱ ተጠቃሚዎች፦</b> {active_app_users}\n"
             f"🔄 <b>አፑ የተከፈተበት ድምር፦</b> {total_app_opens} ጊዜ\n"
+            f"🔘 <b>የቦት በተን ንክኪዎች ድምር፦</b> {total_bot_clicks} ጊዜ\n"
             f"🤖 <b>ቦት ብቻ የተጠቀሙ፦</b> {bot_only_count}\n"
             f"✍️ <b>ጠቅላላ የተመለሱ ጥያቄዎች፦</b> {total_q}\n"
             f"📥 <b>አጠቃላይ የተወረዱ ፈተናዎች፦</b> {total_d}\n"
@@ -606,6 +647,74 @@ def handle_stats(message):
         bot.send_message(message.chat.id, stats_msg, parse_mode="HTML")
     except Exception as e:
         bot.send_message(message.chat.id, f"Stats Error: {e}")
+
+# 🚀 የተሟላ የተማሪ ፕሮፋይል ካርድ መመልከቻ (/find <USER_ID>)
+@bot.message_handler(commands=['find'])
+def find_sqlite_user(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/find <USER_ID>`\n\nምሳሌ፦\n`/find 7097060497`", parse_mode="Markdown")
+        return
+
+    target_id = parts[1].strip().replace("`", "").replace('"', '').replace("'", "")
+
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('''
+            SELECT telegram_id, first_name, username, coins, downloads, 
+                   ads_watched, questions_answered, app_opened, 
+                   bot_interactions, is_blocked, lang, created_at 
+            FROM users WHERE telegram_id = ?
+        ''', (target_id,))
+        user = c.fetchone()
+
+        c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (target_id,))
+        unlocked_rows = c.fetchall()
+        unlocked_list = [r[0] for r in unlocked_rows]
+        conn.close()
+
+        if not user:
+            bot.reply_to(message, f"❌ ID `{target_id}` ያለው ተጠቃሚ በዳታቤዝ ውስጥ አልተገኘም።", parse_mode="Markdown")
+            return
+
+        uid, name, uname, coins, dl, ads, q_ans, app_op, b_intr, is_blk, lang_pref, created = user
+        status_str = "🚫 የታገደ (Blocked)" if is_blk == 1 else "🟢 ንቁ (Active)"
+        materials_str = ", ".join(unlocked_list) if unlocked_list else "ምንም አልከፈተም"
+
+        user_card = (
+            f"👤 <b>የተጠቃሚ ሙሉ ዝርዝር መረጃ (User Profile)፦</b>\n\n"
+            f"• <b>ስም፦</b> {name}\n"
+            f"• <b>Username፦</b> {uname}\n"
+            f"• <b>Telegram ID፦</b> <code>{uid}</code>\n"
+            f"• <b>ሁኔታ (Status)፦</b> {status_str}\n"
+            f"• <b>የመረጠው ቋንቋ፦</b> {lang_pref.upper() if lang_pref else 'AM'}\n\n"
+            f"📊 <b>የእንቅስቃሴና የቦት አጠቃቀም መረጃ፦</b>\n"
+            f"  ↳ 📱 <b>አፑን የከፈተበት ብዛት፦</b> {app_op or 0} ጊዜ\n"
+            f"  ↳ 🔘 <b>የቦት በተን ንክኪዎች፦</b> {b_intr or 0} ጊዜ\n"
+            f"  ↳ 🪙 <b>ያለው ሳንቲም (Coins)፦</b> {coins} Coins\n"
+            f"  ↳ ✍️ <b>የመለሳቸው ጥያቄዎች፦</b> {q_ans or 0}\n"
+            f"  ↳ 📥 <b>ያወረዳቸው ፈተናዎች፦</b> {dl or 0} ጊዜ\n"
+            f"  ↳ 📺 <b>ያያቸው ማስታወቂያዎች፦</b> {ads or 0} ጊዜ\n\n"
+            f"📚 <b>የከፈታቸው ማቴሪያሎች፦</b>\n<code>{materials_str}</code>\n\n"
+            f"🕒 <b>የተመዘገበበት ቀን፦</b> <i>{created}</i>"
+        )
+
+        reply_kb = InlineKeyboardMarkup()
+        reply_kb.add(InlineKeyboardButton(text="↩️ ለተጠቃሚው መልስ ስጥ (Reply)", callback_data=f"admin_reply_{uid}"))
+
+        bot.send_message(
+            message.chat.id,
+            user_card,
+            parse_mode="HTML",
+            reply_markup=reply_kb
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ ስህተት፦ {e}")
 
 # 🚀 አዲስ፦ ቦቱን Block ያደረጉ ተጠቃሚዎችን ዝርዝር ማሳያ (/blocked)
 @bot.message_handler(commands=['blocked'])
@@ -762,12 +871,12 @@ def handle_db_merge(message):
                 INSERT OR IGNORE INTO users (
                     telegram_id, first_name, username, coins, 
                     downloads, ads_watched, questions_answered, 
-                    app_opened, is_blocked, created_at
+                    app_opened, bot_interactions, is_blocked, lang, created_at
                 )
                 SELECT 
                     telegram_id, first_name, username, coins, 
                     downloads, ads_watched, questions_answered, 
-                    app_opened, 0, created_at 
+                    app_opened, 0, 0, 'am', created_at 
                 FROM old_db.users
             ''')
 
@@ -926,7 +1035,6 @@ def save_parsed_users(message, text):
         name_match = re.search(r'\|\s*(?:👤\s*)?([^(|\n]+)', block)
         name = name_match.group(1).strip() if name_match else "Student"
 
-        # Username ማውጣት (በመስመሩ ውስጥ የሚገኝ ማንኛውንም @username በቀጥታ ይይዛል)
         user_match = re.search(r'@([A-Za-z0-9_]+)', block)
         if user_match:
             username = f"@{user_match.group(1).strip()}"
@@ -1074,53 +1182,12 @@ def handle_message_reactions(update):
     except Exception as e:
         print(f"Reaction handler error: {e}")
 
-# --- FIND USER COMMAND ---
-@bot.message_handler(commands=['find'])
-def find_sqlite_user(message):
-    if str(message.from_user.id) != str(ADMIN_ID):
-        return
-
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "⚠️ አጠቃቀም፦\n`/find <USER_ID>`", parse_mode="Markdown")
-        return
-
-    target_id = parts[1].strip()
-
-    try:
-        conn = sqlite3.connect('database.sqlite')
-        c = conn.cursor()
-        c.execute('SELECT * FROM users WHERE telegram_id = ?', (target_id,))
-        user = c.fetchone()
-        headers = [desc[0] for desc in c.description] if user else []
-
-        c.execute('SELECT file_key FROM unlocked_materials WHERE telegram_id = ?', (target_id,))
-        unlocked_rows = c.fetchall()
-        unlocked_list = [r[0] for r in unlocked_rows]
-        conn.close()
-
-        if not user:
-            bot.reply_to(message, f"❌ ID `{target_id}` ያለው ተጠቃሚ አልተገኘም።", parse_mode="Markdown")
-            return
-
-        info_lines = [f"• <b>{headers[i]}:</b> {user[i]}" for i in range(len(headers))]
-        materials_str = ", ".join(unlocked_list) if unlocked_list else "ምንም አልከፈተም"
-        info_lines.append(f"• <b>unlocked_materials:</b> {materials_str}")
-
-        bot.send_message(
-            message.chat.id,
-            f"👤 <b>የተጠቃሚው ሙሉ መረጃ፦</b>\n\n" + "\n".join(info_lines),
-            parse_mode="HTML"
-        )
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ ስህተት፦ {e}")
-
 # --- FEEDBACK BUTTON & HANDLER ---
 @bot.callback_query_handler(func=lambda call: call.data == "give_feedback")
 def feedback_prompt(call):
     chat_id = call.message.chat.id
-    lang = user_languages.get(chat_id, "am")
+    record_bot_interaction(call.from_user.id)
+    lang = get_user_lang(call.from_user.id)
     
     bot.clear_step_handler_by_chat_id(chat_id=chat_id)
     
@@ -1134,9 +1201,10 @@ def feedback_prompt(call):
 
 def save_and_forward_feedback(message):
     user = message.from_user
+    record_bot_interaction(user.id)
     feedback_text = message.text or ""
     chat_id = message.chat.id
-    lang = user_languages.get(chat_id, "am")
+    lang = get_user_lang(user.id)
     
     if feedback_text.startswith('/'):
         if feedback_text.startswith('/start'):
@@ -1199,7 +1267,7 @@ def send_admin_reply_to_user(message, target_user_id):
         return
 
     try:
-        user_lang = user_languages.get(int(target_user_id), "am")
+        user_lang = get_user_lang(target_user_id)
         header = "📩 ከአስተዳዳሪው የተላከ መልስ፦\n\n" if user_lang == "am" else "📩 Reply from Admin:\n\n"
         bot.send_message(int(target_user_id), header + reply_text, reply_markup=get_main_keyboard(user_lang))
         bot.reply_to(message, f"✅ መልስዎ ለተጠቃሚው (ID: {target_user_id}) በተሳካ ሁኔታ ተልኳል!")
@@ -1220,16 +1288,18 @@ def handle_reply_command(message):
     reply_text = parts[2]
 
     try:
-        user_lang = user_languages.get(int(target_user_id), "am")
+        user_lang = get_user_lang(target_user_id)
         header = "📩 ከአስተዳዳሪው የተላከ መልስ፦\n\n" if user_lang == "am" else "📩 Reply from Admin:\n\n"
         bot.send_message(int(target_user_id), header + reply_text, reply_markup=get_main_keyboard(user_lang))
         bot.reply_to(message, f"✅ መልስዎ ለተጠቃሚው (ID: {target_user_id}) በተሳካ ሁኔታ ተልኳል!")
     except Exception as e:
         bot.reply_to(message, f"❌ መልሱን መላክ አልተቻለም፦ {e}")
 
+# --- LANGUAGE SELECTION ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_") or call.data == "change_lang")
 def handle_language_choice(call):
     chat_id = call.message.chat.id
+    record_bot_interaction(call.from_user.id)
     if call.data == "change_lang":
         bot.edit_message_text(
             chat_id=chat_id,
@@ -1239,8 +1309,20 @@ def handle_language_choice(call):
         )
         return
 
-    if call.data == "lang_am":
-        user_languages[chat_id] = "am"
+    selected_lang = "am" if call.data == "lang_am" else "en"
+    user_languages[str(chat_id)] = selected_lang
+    user_languages[str(call.from_user.id)] = selected_lang
+
+    try:
+        conn = sqlite3.connect('database.sqlite')
+        c = conn.cursor()
+        c.execute('UPDATE users SET lang = ? WHERE telegram_id = ?', (selected_lang, str(call.from_user.id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Language DB save error: {e}")
+
+    if selected_lang == "am":
         text = (
             "✅ ቋንቋ ወደ አማርኛ ተቀይሯል!\n\n"
             "እንኳን ወደ Bahirab Quiz & Study Hub በደህና መጣችሁ።\n"
@@ -1252,8 +1334,7 @@ def handle_language_choice(call):
             text=text,
             reply_markup=get_main_keyboard("am")
         )
-    elif call.data == "lang_en":
-        user_languages[chat_id] = "en"
+    else:
         text = (
             "✅ Language set to English!\n\n"
             "Welcome to Bahirab Quiz & Study Hub.\n"
@@ -1273,12 +1354,13 @@ def handle_start(message):
     user = message.from_user
     
     track_user_db(user)
+    record_bot_interaction(user.id)
     
     text_parts = message.text.split()
     
     if len(text_parts) > 1:
         file_key = text_parts[1]
-        lang = user_languages.get(chat_id, "am")
+        lang = get_user_lang(user.id)
         user_id = str(user.id)
         
         if file_key in EXAMS:
@@ -1351,6 +1433,50 @@ def handle_start(message):
         "Please choose your language to start:",
         reply_markup=get_lang_selection_keyboard()
     )
+
+# --- ❓ በስህተት የተላኩ ጽሑፎችን መከታተያ (በተማሪው ቋንቋ ምላሽ የሚሰጥ) ---
+@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'video', 'voice', 'document', 'audio'])
+def handle_unexpected_messages(message):
+    user = message.from_user
+    user_id = str(user.id)
+
+    track_user_db(user)
+    record_bot_interaction(user_id)
+
+    if user_id == str(ADMIN_ID):
+        return
+
+    lang = get_user_lang(user_id)
+    msg_content = message.text or f"[{message.content_type}]"
+
+    def alert_unknown():
+        try:
+            admin_alert = (
+                f"❓ <b>ያልታወቀ/የተሳሳተ መልዕክት ደረሰ!</b>\n\n"
+                f"👤 <b>ተማሪ፦</b> {user.first_name} (@{user.username or 'No Username'})\n"
+                f"🆔 <b>ID፦</b> <code>{user_id}</code>\n"
+                f"🌐 <b>ቋንቋ፦</b> {lang.upper()}\n"
+                f"💬 <b>የላከው፦</b>\n{msg_content}"
+            )
+            reply_kb = InlineKeyboardMarkup()
+            reply_kb.add(InlineKeyboardButton(text="↩️ መልስ ስጥ (Reply)", callback_data=f"admin_reply_{user_id}"))
+            bot.send_message(int(ADMIN_ID), admin_alert, parse_mode="HTML", reply_markup=reply_kb)
+        except Exception as e:
+            print(f"Unknown msg alert error: {e}")
+
+    threading.Thread(target=alert_unknown).start()
+
+    if lang == "en":
+        response_text = (
+            "⚠️ Sorry, unrecognized message or command.\n\n"
+            "📚 Please tap the <b>'Open App'</b> button below to access study materials, or click <b>'Feedback'</b>."
+        )
+    else:
+        response_text = (
+            "⚠️ ይቅርታ፣ ያልታወቀ መልዕክት ወይም ትዕዛዝ ነው።\n\n"
+            "📚 ጥያቄዎችን፣ ፈተናዎችን እና ኖቶችን ለማግኘት ከታች ያለውን <b>'Open App'</b> በተን ይጫኑ ወይም አስተያየት ለመስጠት <b>'አስተያየት'</b> የሚለውን ይምረጡ።"
+        )
+    bot.reply_to(message, response_text, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
 
 if __name__ == '__main__':
     flask_thread = threading.Thread(target=run_flask)
